@@ -1,5 +1,6 @@
 # MacOS files
 .DS_Store
+tmp/
 
 # IDE files
 .idea/
@@ -13,3 +14,28 @@
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Local dev stack runtime state
+local/.run/
+local/.logs/
+node_modules/
+cdk.out/
+dist/
+.omni/
+.venv/
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
+.pytest_cache/
+
+# CDK build output directories
+cdk.out2/
+
+# Kiro specs (point-in-time design documents)
+.kiro/specs/

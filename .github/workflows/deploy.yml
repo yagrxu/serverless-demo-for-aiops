@@ -1,0 +1,262 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - test
+      - release
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target environment"
+        required: true
+        type: choice
+        options:
+          - test
+          - release
+      force_all:
+        description: "Rebuild/deploy everything regardless of diff"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  resolve:
+    name: Resolve target
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.pick.outputs.environment }}
+    steps:
+      - id: pick
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "environment=${{ inputs.target }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "environment=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  changes:
+    name: Detect changes
+    needs: resolve
+    runs-on: ubuntu-latest
+    outputs:
+      cdk:        ${{ steps.filter.outputs.cdk }}
+      lambda:     ${{ steps.filter.outputs.lambda }}
+      chatbot:    ${{ steps.filter.outputs.chatbot }}
+      langgraph:  ${{ steps.filter.outputs.langgraph }}
+      strands:    ${{ steps.filter.outputs.strands }}
+      mcp_server: ${{ steps.filter.outputs.mcp_server }}
+      first_run:  ${{ steps.firstrun.outputs.first_run }}
+      force_all:  ${{ steps.firstrun.outputs.force_all }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: firstrun
+        env:
+          BEFORE: ${{ github.event.before }}
+          FORCE: ${{ inputs.force_all }}
+        run: |
+          if [ "${FORCE}" = "true" ]; then
+            echo "force_all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "force_all=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "${BEFORE}" ] || [ "${BEFORE}" = "0000000000000000000000000000000000000000" ]; then
+            echo "first_run=true" >> "$GITHUB_OUTPUT"
+          else
+            if git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+              echo "first_run=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "first_run=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          base: ${{ github.event.before }}
+          filters: |
+            cdk:
+              - 'cdk/bin/**'
+              - 'cdk/lib/**'
+              - 'cdk/package.json'
+              - 'cdk/package-lock.json'
+              - 'cdk/tsconfig.json'
+              - 'cdk/cdk.json'
+            lambda:
+              - 'cdk/lambda/**'
+            chatbot:
+              - 'ui/chatbot/**'
+            langgraph:
+              - 'agents/langgraph/**'
+            strands:
+              - 'agents/strands/**'
+            mcp_server:
+              - 'mcp-server/**'
+
+  deploy:
+    name: CDK Deploy (${{ needs.resolve.outputs.environment }})
+    needs: [resolve, changes]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
+    timeout-minutes: 45
+
+    env:
+      AWS_REGION: us-east-1
+      PROJECT_NAME: aiops-cat-demo
+      FIRST_RUN:    ${{ needs.changes.outputs.first_run }}
+      FORCE_ALL:    ${{ needs.changes.outputs.force_all }}
+      CHG_CDK:      ${{ needs.changes.outputs.cdk }}
+      CHG_LAMBDA:   ${{ needs.changes.outputs.lambda }}
+      CHG_CHATBOT:  ${{ needs.changes.outputs.chatbot }}
+      CHG_LANGGRAPH: ${{ needs.changes.outputs.langgraph }}
+      CHG_STRANDS:  ${{ needs.changes.outputs.strands }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cdk/package-lock.json
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ needs.resolve.outputs.environment }}-deploy
+
+      - name: Verify AWS identity
+        id: aws
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          echo "account=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Summarize change detection
+        run: |
+          echo "first_run=$FIRST_RUN  force_all=$FORCE_ALL"
+          echo "cdk=$CHG_CDK  lambda=$CHG_LAMBDA  chatbot=$CHG_CHATBOT"
+          echo "langgraph=$CHG_LANGGRAPH  strands=$CHG_STRANDS"
+
+      - name: Install CDK dependencies
+        working-directory: cdk
+        run: npm ci
+
+      - name: Build CDK
+        working-directory: cdk
+        run: npm run build
+
+      # ===================================================================
+      # Phase 1: Non-agent stacks (ECR, Data, API, Gateway, UI)
+      # ===================================================================
+      - name: "Phase 1: Deploy infrastructure stacks"
+        if: >-
+          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' ||
+          env.CHG_CDK == 'true' || env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true'
+        working-directory: cdk
+        run: |
+          npx cdk deploy \
+            ${PROJECT_NAME}-ecr \
+            ${PROJECT_NAME}-data \
+            ${PROJECT_NAME}-api \
+            ${PROJECT_NAME}-gateway \
+            --require-approval never \
+            -c skipAgents=true
+
+      # ===================================================================
+      # Phase 2: Build and push Docker images
+      # ===================================================================
+      - name: ECR login
+        if: >-
+          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin \
+              "${{ steps.aws.outputs.account }}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+      - name: "Build and push: langgraph"
+        if: env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_LANGGRAPH == 'true'
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.account }}
+          SHA: ${{ github.sha }}
+        run: |
+          repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-langgraph"
+          docker buildx build --platform linux/arm64 \
+            --tag "${repo}:${SHA}" --tag "${repo}:latest" --push agents/langgraph
+
+      - name: "Build and push: strands"
+        if: env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_STRANDS == 'true'
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.account }}
+          SHA: ${{ github.sha }}
+        run: |
+          repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-strands"
+          docker buildx build --platform linux/arm64 \
+            --tag "${repo}:${SHA}" --tag "${repo}:latest" --push agents/strands
+
+      - name: "Build and push: chatbot"
+        if: env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CHATBOT == 'true'
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.account }}
+          SHA: ${{ github.sha }}
+        run: |
+          repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-chatbot"
+          docker buildx build --platform linux/arm64 \
+            --tag "${repo}:${SHA}" --tag "${repo}:latest" --push ui/chatbot
+
+      # Retag unchanged images to this SHA so all stacks can use the same imageTag
+      - name: Retag unchanged images
+        if: >-
+          env.FIRST_RUN != 'true' && env.FORCE_ALL != 'true' && (
+            env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
+          )
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.account }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          retag() {
+            local name=$1 changed=$2
+            if [ "$changed" = "true" ]; then return 0; fi
+            local repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-${name}"
+            echo ">> Retagging ${name}:latest → :${SHA}"
+            docker buildx imagetools create --tag "${repo}:${SHA}" "${repo}:latest"
+          }
+          retag langgraph "$CHG_LANGGRAPH"
+          retag strands   "$CHG_STRANDS"
+          retag chatbot   "$CHG_CHATBOT"
+
+      # ===================================================================
+      # Phase 3: Deploy agent + chatbot stacks
+      # ===================================================================
+      - name: "Phase 3: Deploy agents + fargate + UI"
+        if: >-
+          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
+        working-directory: cdk
+        run: |
+          npx cdk deploy \
+            ${PROJECT_NAME}-agents \
+            ${PROJECT_NAME}-fargate \
+            ${PROJECT_NAME}-ui \
+            --require-approval never \
+            -c imageTag=${{ github.sha }}

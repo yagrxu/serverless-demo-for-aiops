@@ -1,0 +1,42 @@
+# Laptop dev stack. See docs/local-testing.md.
+#
+#   docker compose up --build
+#   ./local/scripts/init-ddb.sh      # once, after ddb is healthy
+#
+# Services:
+#   ddb          -> DynamoDB Local on :8001
+#   api          -> FastAPI wrapper over the Lambda handlers on :8000
+#
+# Agents run on the host (not in Docker) so they inherit your AWS
+# credentials and env vars directly. See docs/local-testing.md.
+#
+# UIs run outside docker via `npm run dev` (see ui/*/README.md).
+
+services:
+  ddb:
+    image: amazon/dynamodb-local:latest
+    command: -jar DynamoDBLocal.jar -sharedDb -inMemory
+    ports:
+      - "8001:8000"
+
+  api:
+    build: ./local/api
+    environment:
+      AWS_ACCESS_KEY_ID: local
+      AWS_SECRET_ACCESS_KEY: local
+      AWS_DEFAULT_REGION: us-east-1
+      DDB_ENDPOINT: http://ddb:8000
+      CAT_PROFILES_TABLE: CatProfiles
+      DEVICES_TABLE: Devices
+      DEVICE_TELEMETRY_TABLE: DeviceTelemetry
+      FEEDING_EVENTS_TABLE: FeedingEvents
+      HEALTH_METRICS_TABLE: HealthMetrics
+      HEALTH_ALERTS_TABLE: HealthAlerts
+      CAT_NAME_INDEX_TABLE: CatNameIndex
+    volumes:
+      - ./cdk/lambda:/app/lambda:ro
+      - ./local/api/app.py:/app/app.py:ro
+    depends_on:
+      - ddb
+    ports:
+      - "8000:8000"

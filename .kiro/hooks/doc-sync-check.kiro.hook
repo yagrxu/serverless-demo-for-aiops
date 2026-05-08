@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "Doc Sync Check",
+  "description": "After completing a spec task, remind the agent to update all documentation files (architecture.md, local-testing.md, README.md, local/README.md) if the task changed ports, services, scripts, dependencies, or architecture.",
+  "version": "1",
+  "when": {
+    "type": "postTaskExecution"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "Check if the completed task changed any ports, services, scripts, dependencies, or architecture. If so, update these docs to stay in sync: docs/architecture.md, docs/local-testing.md, README.md, local/README.md. Refer to the doc-sync steering file for the port registry and update rules."
+  }
+}
