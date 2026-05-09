@@ -47,7 +47,10 @@ The workflow reads `vars.AWS_DEPLOY_ROLE_ARN` from the matching GitHub environme
 1. Resolves the target environment from the branch name (or the dispatch input).
 2. Activates that GitHub environment, which picks up `AWS_DEPLOY_ROLE_ARN`.
 3. Assumes the role via OIDC (`aws-actions/configure-aws-credentials`).
-4. `npm ci` → `cdk bootstrap` → `cdk deploy --all --require-approval never`.
+4. CDK bootstrap (idempotent — only runs if the account hasn't been bootstrapped yet).
+5. `npm ci` → `cdk deploy --all --require-approval never`.
+
+The deploy job uses `ubuntu-24.04-arm` runner because agent and chatbot Docker images target `linux/arm64` (Fargate ARM64 + AgentCore). Building natively on ARM avoids QEMU emulation failures during `npm ci` with native modules.
 
 ## One-time setup (per account)
 
