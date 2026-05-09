@@ -108,7 +108,7 @@ jobs:
   deploy:
     name: CDK Deploy (${{ needs.resolve.outputs.environment }})
     needs: [resolve, changes]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     environment: ${{ needs.resolve.outputs.environment }}
     timeout-minutes: 45
 
