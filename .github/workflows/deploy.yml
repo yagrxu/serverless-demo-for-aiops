@@ -150,6 +150,16 @@ jobs:
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           echo "account=$ACCOUNT_ID" >> "$GITHUB_OUTPUT"
 
+      - name: CDK Bootstrap (idempotent)
+        working-directory: cdk
+        run: |
+          if aws ssm get-parameter --name /cdk-bootstrap/hnb659fds/version --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo ">> Environment already bootstrapped — skipping"
+          else
+            echo ">> Bootstrapping aws://${{ steps.aws.outputs.account }}/${{ env.AWS_REGION }}"
+            npx cdk bootstrap "aws://${{ steps.aws.outputs.account }}/${{ env.AWS_REGION }}"
+          fi
+
       - name: Summarize change detection
         run: |
           echo "first_run=$FIRST_RUN  force_all=$FORCE_ALL"
