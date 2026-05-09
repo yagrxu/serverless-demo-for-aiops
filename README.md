@@ -61,6 +61,8 @@ CLAUDE.md
 ## Local development
 
 See [`docs/local-testing.md`](./docs/local-testing.md) for full details.
+See [`docs/local-vs-cloud.md`](./docs/local-vs-cloud.md) for a detailed
+technical comparison between local and cloud environments.
 
 ```bash
 export AWS_PROFILE=<your-bedrock-profile>
