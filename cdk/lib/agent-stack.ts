@@ -42,6 +42,7 @@ export class AgentStack extends cdk.Stack {
       actions: [
         'bedrock:InvokeModel',
         'bedrock:InvokeModelWithResponseStream',
+        'bedrock:CountTokens',
         'bedrock-agentcore:InvokeGateway',
         'logs:CreateLogGroup',
         'logs:CreateLogStream',
