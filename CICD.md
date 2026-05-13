@@ -66,6 +66,26 @@ AWS_PROFILE=default GH_ENV=release ./scripts/ci/setup-github-oidc.sh
 
 Each run creates the GitHub OIDC provider in that account (if missing), the deploy role scoped to that GitHub environment, attaches `AdministratorAccess` (test-only project), and — if `gh` is authed — creates the environment and sets the `AWS_DEPLOY_ROLE_ARN` variable automatically.
 
+### Enable CloudWatch Transaction Search (per account, one-time)
+
+AgentCore Gateway delivers spans via CloudWatch Logs delivery (the
+`gateway-stack` wires `DeliverySource` → `DeliveryDestination` of type
+`XRAY`). For those spans to appear in the GenAI Observability dashboard,
+the account must have Transaction Search enabled. Propagation takes ~10
+minutes, which is why this lives outside CDK.
+
+```bash
+# Run once per account, in us-east-1.
+AWS_PROFILE=cloudops-demo aws xray update-trace-segment-destination \
+  --destination CloudWatchLogs --region us-east-1
+AWS_PROFILE=default        aws xray update-trace-segment-destination \
+  --destination CloudWatchLogs --region us-east-1
+```
+
+Verify in the CloudWatch console under **Application Signals (APM) →
+Transaction search** that ingestion is enabled before expecting traces
+on the dashboard.
+
 ## Typical loop (AIOps investigation)
 
 ```bash

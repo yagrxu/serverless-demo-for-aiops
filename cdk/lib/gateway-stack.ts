@@ -259,6 +259,46 @@ export class GatewayStack extends cdk.Stack {
     });
     deviceTarget.addDependency(gateway);
 
+    // --- Tracing: deliver gateway spans to X-Ray ---
+    //
+    // AgentCore Gateway has no `TracingEnabled` property on the CFN
+    // resource itself. Tracing is configured via the generic
+    // CloudWatch Logs delivery model: a DeliverySource with
+    // logType=TRACES paired with a DeliveryDestination of type XRAY.
+    //
+    // Prerequisite (one-time, per account/region, NOT in CDK):
+    //   aws xray update-trace-segment-destination --destination CloudWatchLogs
+    // Without Transaction Search enabled the spans are accepted but
+    // never indexed for the GenAI Observability dashboard.
+    // See observability-stack.ts for the rationale.
+    const tracesSource = new cdk.CfnResource(this, 'GatewayTracesSource', {
+      type: 'AWS::Logs::DeliverySource',
+      properties: {
+        Name: 'cat-care-gateway-traces',
+        LogType: 'TRACES',
+        ResourceArn: gateway.getAtt('GatewayArn'),
+      },
+    });
+    tracesSource.addDependency(gateway);
+
+    const tracesDestination = new cdk.CfnResource(this, 'GatewayTracesDestination', {
+      type: 'AWS::Logs::DeliveryDestination',
+      properties: {
+        Name: 'cat-care-gateway-traces-xray',
+        DeliveryDestinationType: 'XRAY',
+      },
+    });
+
+    const tracesDelivery = new cdk.CfnResource(this, 'GatewayTracesDelivery', {
+      type: 'AWS::Logs::Delivery',
+      properties: {
+        DeliverySourceName: tracesSource.ref,
+        DeliveryDestinationArn: tracesDestination.getAtt('Arn'),
+      },
+    });
+    tracesDelivery.addDependency(tracesSource);
+    tracesDelivery.addDependency(tracesDestination);
+
     // Export Gateway URL
     this.gatewayUrlValue = cdk.Token.asString(gateway.getAtt('GatewayUrl'));
     this.gatewayUrl = new cdk.CfnOutput(this, 'GatewayUrl', {
