@@ -1,24 +1,36 @@
 #!/usr/bin/env bash
 # Start a single agent on the host.
 #
-#   ./local/scripts/start-agent.sh langgraph   # start LangGraph on :8081
-#   ./local/scripts/start-agent.sh strands     # start Strands on :8082
+#   ./local/scripts/start-agent.sh langgraph           # start LangGraph on :8081 with OTel
+#   ./local/scripts/start-agent.sh strands             # start Strands on :8082 with OTel
+#   ./local/scripts/start-agent.sh langgraph --no-otel # start without opentelemetry-instrument
 #
-# Assumes Docker + MCP Server are already running (use up.sh --no-agents first).
 # The agent runs in the foreground so you can see logs directly and Ctrl-C to stop.
+# By default, `opentelemetry-instrument` wraps the process so spans are emitted
+# and CodeMetadataSpanProcessor attaches source-line attributes — useful for
+# local debugging. Pass --no-otel to skip the wrapper (faster startup).
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 usage() {
-  echo "Usage: $0 <langgraph|strands>"
+  echo "Usage: $0 <langgraph|strands> [--no-otel]"
   exit 1
 }
 
 [[ $# -lt 1 ]] && usage
 
 AGENT="$1"
+shift
+USE_OTEL=true
+for arg in "$@"; do
+  case "$arg" in
+    --no-otel) USE_OTEL=false ;;
+    *) echo "unknown arg: $arg"; usage ;;
+  esac
+done
+
 case "$AGENT" in
   langgraph) PORT=8081 ;;
   strands)   PORT=8082 ;;
@@ -43,8 +55,21 @@ fi
 
 echo ">> starting $AGENT agent on :$PORT (foreground, Ctrl-C to stop)"
 echo "   MCP_SERVER_URL=http://localhost:8083/mcp"
+if $USE_OTEL; then
+  echo "   OTel auto-instrument: enabled (use --no-otel to disable)"
+fi
 echo ""
 
 cd "$AGENT_DIR"
-MCP_SERVER_URL=http://localhost:8083/mcp \
-  exec "$VENV/bin/python" -m uvicorn server:app --host 0.0.0.0 --port "$PORT" --reload
+
+if $USE_OTEL; then
+  # `opentelemetry-instrument` sets up an SDK TracerProvider and auto-loads
+  # every installed opentelemetry-instrumentation-* package. This also makes
+  # tracing_extras.CodeMetadataSpanProcessor attach correctly.
+  MCP_SERVER_URL=http://localhost:8083/mcp \
+    exec "$VENV/bin/opentelemetry-instrument" "$VENV/bin/python" \
+      -m uvicorn server:app --host 0.0.0.0 --port "$PORT" --reload
+else
+  MCP_SERVER_URL=http://localhost:8083/mcp \
+    exec "$VENV/bin/python" -m uvicorn server:app --host 0.0.0.0 --port "$PORT" --reload
+fi

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import ChatPanel, { Msg } from './components/ChatPanel';
+import { getSessionId, SESSION_HEADER } from '@/lib/session';
 
 interface InvokeResponse {
   langgraph?: string;
@@ -32,7 +33,10 @@ export default function Home() {
     try {
       const res = await fetch('/api/invoke', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          [SESSION_HEADER]: getSessionId(),
+        },
         body: JSON.stringify({ message: msg, agent: 'both' }),
       });
       const data: InvokeResponse = await res.json();
