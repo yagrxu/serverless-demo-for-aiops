@@ -262,6 +262,7 @@ jobs:
           # this image tag is also the one Phase 3 will deploy with.
           npx cdk deploy \
             ${PROJECT_NAME}-ecr \
+            ${PROJECT_NAME}-observability \
             ${PROJECT_NAME}-data \
             ${PROJECT_NAME}-api \
             ${PROJECT_NAME}-gateway \

@@ -1,0 +1,11 @@
+# CDK compile output (TypeScript). The CI workflow re-runs `npm run build`
+# on every deploy so these don't need to live in source control.
+*.js
+*.d.ts
+!jest.config.js
+
+# CDK synth output
+cdk.out/
+
+# Bundling cache (not always present)
+.cdk.staging/

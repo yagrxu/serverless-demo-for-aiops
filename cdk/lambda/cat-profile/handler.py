@@ -12,7 +12,17 @@ import json
 import os
 import uuid
 from decimal import Decimal
+
 import boto3
+from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
+
+# Powertools Logger auto-stamps xray_trace_id, function_request_id,
+# cold_start, service on every JSON line via @inject_lambda_context.
+# Powertools Metrics flushes EMF blocks to stdout via @log_metrics so
+# CloudWatch picks up the CatDemo metrics without PutMetricData calls.
+logger = Logger(service="cat-profile")
+metrics = Metrics(namespace="CatDemo", service="cat-profile")
 
 # DDB_ENDPOINT is only set in local dev (docker-compose -> DynamoDB Local).
 _ddb_kwargs = {"endpoint_url": os.environ["DDB_ENDPOINT"]} if os.environ.get("DDB_ENDPOINT") else {}
@@ -37,20 +47,19 @@ def _resp(status: int, body):
 
 def _dispatch_gateway(event, context):
     """Handle AgentCore Gateway tool invocations.
-    
+
     Gateway sends:
       - event: the tool input parameters directly (e.g. {"cat_id": "hotpot"})
       - context.client_context.custom['bedrockAgentCoreToolName']: "target___tool_name"
     """
-    # Extract tool name from context (strip target prefix)
     delimiter = "___"
     original_tool_name = context.client_context.custom.get("bedrockAgentCoreToolName", "")
     if delimiter in original_tool_name:
         tool_name = original_tool_name[original_tool_name.index(delimiter) + len(delimiter):]
     else:
         tool_name = original_tool_name
-    
-    tool_input = event  # event IS the tool input directly
+
+    tool_input = event
 
     try:
         if tool_name == "get_cat_profile":
@@ -58,12 +67,14 @@ def _dispatch_gateway(event, context):
             if not cat_id:
                 return {"error": "cat_id is required"}
             item = TABLE.get_item(Key={"cat_id": cat_id}).get("Item")
+            metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
             if not item:
                 return {"error": f"cat '{cat_id}' not found"}
             return item
 
         elif tool_name == "list_cats":
             items = TABLE.scan(Limit=50).get("Items", [])
+            metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
             return items
 
         elif tool_name == "lookup_cat_by_name":
@@ -71,6 +82,7 @@ def _dispatch_gateway(event, context):
             if not name:
                 return {"error": "name is required"}
             got = NAME_INDEX.get_item(Key={"name": name}).get("Item")
+            metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
             if not got:
                 return {"error": f"no cat found with name '{name}'"}
             return got
@@ -78,9 +90,12 @@ def _dispatch_gateway(event, context):
         else:
             return {"error": f"unknown tool: {tool_name}"}
     except Exception as e:
+        logger.exception("gateway tool failed", extra={"tool": tool_name})
         return {"error": str(e)}
 
 
+@logger.inject_lambda_context
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, _ctx):
     # AgentCore Gateway dispatch — tool name is in context.client_context
     if hasattr(_ctx, 'client_context') and _ctx.client_context and hasattr(_ctx.client_context, 'custom') and _ctx.client_context.custom and 'bedrockAgentCoreToolName' in _ctx.client_context.custom:
@@ -92,6 +107,7 @@ def lambda_handler(event, _ctx):
 
     if method == "GET" and path == "/cats":
         items = TABLE.scan(Limit=50).get("Items", [])
+        metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
         return _resp(200, items)
 
     if method == "POST" and path == "/cats":
@@ -104,6 +120,7 @@ def lambda_handler(event, _ctx):
             val = body.get(field)
             if val:
                 NAME_INDEX.put_item(Item={"name": val, "cat_id": cat_id, "name_type": field})
+        metrics.add_metric(name="CatProfilesWritten", unit=MetricUnit.Count, value=1)
         return _resp(201, body)
 
     if method == "GET" and path == "/cats/lookup":
@@ -112,6 +129,7 @@ def lambda_handler(event, _ctx):
         if not name:
             return _resp(400, {"message": "name is required"})
         got = NAME_INDEX.get_item(Key={"name": name}).get("Item")
+        metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
         if not got:
             return _resp(404, {"message": f"no cat found with name '{name}'"})
         return _resp(200, got)
@@ -119,6 +137,7 @@ def lambda_handler(event, _ctx):
     if method == "GET" and path == "/cats/{id}":
         cat_id = event["pathParameters"]["id"]
         got = TABLE.get_item(Key={"cat_id": cat_id}).get("Item")
+        metrics.add_metric(name="CatProfilesRead", unit=MetricUnit.Count, value=1)
         if not got:
             return _resp(404, {"message": "not found"})
         return _resp(200, got)

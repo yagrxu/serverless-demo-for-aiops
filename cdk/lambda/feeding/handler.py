@@ -9,8 +9,14 @@ import os
 import time
 import uuid
 from decimal import Decimal
+
 import boto3
 from boto3.dynamodb.conditions import Key
+from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
+
+logger = Logger(service="feeding")
+metrics = Metrics(namespace="CatDemo", service="feeding")
 
 _ddb_kwargs = {"endpoint_url": os.environ["DDB_ENDPOINT"]} if os.environ.get("DDB_ENDPOINT") else {}
 TABLE = boto3.resource("dynamodb", **_ddb_kwargs).Table(os.environ["FEEDING_EVENTS_TABLE"])
@@ -36,7 +42,7 @@ def _now_iso():
 
 def _dispatch_gateway(event, context):
     """Handle AgentCore Gateway tool invocations.
-    
+
     Gateway sends tool input as event, tool name in context.client_context.custom.
     """
     delimiter = "___"
@@ -57,6 +63,7 @@ def _dispatch_gateway(event, context):
                 ScanIndexForward=False,
                 Limit=50,
             )
+            metrics.add_metric(name="FeedingsRead", unit=MetricUnit.Count, value=1)
             return res.get("Items", [])
 
         elif tool_name == "record_feeding":
@@ -78,16 +85,19 @@ def _dispatch_gateway(event, context):
                 "source": "gateway",
             }
             TABLE.put_item(Item=item)
+            metrics.add_metric(name="FeedingsCreated", unit=MetricUnit.Count, value=1)
             return item
 
         else:
             return {"error": f"unknown tool: {tool_name}"}
     except Exception as e:
+        logger.exception("gateway tool failed", extra={"tool": tool_name})
         return {"error": str(e)}
 
 
+@logger.inject_lambda_context
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, _ctx):
-    # AgentCore Gateway dispatch
     if hasattr(_ctx, 'client_context') and _ctx.client_context and hasattr(_ctx.client_context, 'custom') and _ctx.client_context.custom and 'bedrockAgentCoreToolName' in _ctx.client_context.custom:
         result = _dispatch_gateway(event, _ctx)
         return json.dumps(result, default=_default)
@@ -104,6 +114,7 @@ def lambda_handler(event, _ctx):
             ScanIndexForward=False,
             Limit=50,
         )
+        metrics.add_metric(name="FeedingsRead", unit=MetricUnit.Count, value=1)
         return _resp(200, res.get("Items", []))
 
     if method == "POST":
@@ -120,6 +131,7 @@ def lambda_handler(event, _ctx):
             "source": body.get("source", "manual"),
         }
         TABLE.put_item(Item=item)
+        metrics.add_metric(name="FeedingsCreated", unit=MetricUnit.Count, value=1)
         return _resp(201, item)
 
     return _resp(405, {"message": "method not allowed"})
