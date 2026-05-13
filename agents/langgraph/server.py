@@ -34,7 +34,7 @@ from streamable_http_sigv4 import SigV4HTTPXAuth
 # ---------------------------------------------------------------------------
 
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
-MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+MODEL_ID = os.environ.get("MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 SYSTEM_PROMPT = (

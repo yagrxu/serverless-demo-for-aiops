@@ -197,11 +197,15 @@ between the first and second CDK deploy phases. `AgentStack` reads
 | LangGraph    | ReAct agent using LangChain's `create_react_agent` with `ChatBedrockConverse`. |
 | Strands      | Model-driven agent using the Strands SDK `Agent` class with `BedrockModel`.    |
 
-Both agents use Claude Sonnet 4.6 (global) by default (`us.anthropic.claude-sonnet-4-6`),
-configurable via the `MODEL_ID` environment variable. They share the
-same 9 API tools (cat profiles, feedings, health, devices) and the same
-system prompt, but use different frameworks — giving AIOps investigators
-two distinct failure topologies to compare.
+Both agents use Claude Haiku 4.5 by default (`anthropic.claude-haiku-4-5-20251001-v1:0`),
+configurable via the `MODEL_ID` environment variable. The plain
+foundation-model id is used (rather than the `us.` cross-region inference
+profile) so that ADOT's `bedrock:CountTokens` calls — which populate
+`gen_ai.usage.*` span attributes — succeed; CountTokens does not accept
+inference-profile ids today. They share the same 9 API tools (cat
+profiles, feedings, health, devices) and the same system prompt, but use
+different frameworks — giving AIOps investigators two distinct failure
+topologies to compare.
 
 Invocation flow (production):
 

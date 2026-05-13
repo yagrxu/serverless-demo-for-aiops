@@ -155,8 +155,8 @@ Chatbot UI ──┬── POST ──► LangGraph :8081 ──┐
 
 In production, AgentCore Gateway (`gateway-stack.ts`) translates MCP
 tool calls directly into Lambda invocations. Locally, the MCP Server
-(`mcp-server/`) mirrors the same pattern. Both agents use Claude Sonnet
-4.6 (global) by default. Override with `MODEL_ID`.
+(`mcp-server/`) mirrors the same pattern. Both agents use Claude Haiku
+4.5 by default. Override with `MODEL_ID`.
 
 ## Previous design
 
