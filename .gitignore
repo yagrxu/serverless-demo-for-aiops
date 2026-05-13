@@ -39,3 +39,13 @@ cdk.out2/
 
 # Kiro specs (point-in-time design documents)
 .kiro/specs/
+
+# Reference material copied from external repos for inspection only
+reference/
+
+# Local-only TODO drafts (not part of the spec workflow)
+todo/
+
+# Local-only working folders (not pushed to git)
+reference/
+todo/
