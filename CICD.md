@@ -42,15 +42,29 @@ The workflow reads `vars.AWS_DEPLOY_ROLE_ARN` from the matching GitHub environme
 
 ## Workflow
 
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) triggers on push to `test` or `release`, plus `workflow_dispatch` where you pick the target. It:
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) triggers on push to `test` or `release`, plus `workflow_dispatch` where you pick the target. Each run:
 
-1. Resolves the target environment from the branch name (or the dispatch input).
-2. Activates that GitHub environment, which picks up `AWS_DEPLOY_ROLE_ARN`.
-3. Assumes the role via OIDC (`aws-actions/configure-aws-credentials`).
-4. CDK bootstrap (idempotent — only runs if the account hasn't been bootstrapped yet).
-5. `npm ci` → `cdk deploy --all --require-approval never`.
+1. **resolve** — picks the target environment (`test` or `release`) from the branch name or the dispatch input.
+2. **stack_health** — assumes the OIDC role, queries CloudFormation for any `aiops-cat-demo-*` stack in a failed/rollback state (`CREATE_FAILED`, `ROLLBACK_*`, `UPDATE_FAILED`, `UPDATE_ROLLBACK_*`, `IMPORT_ROLLBACK_*`). If anything is unhealthy, sets `needs_recovery=true`.
+3. **changes** — runs `dorny/paths-filter` against the previous push to decide which phases need to run. Folds `needs_recovery` into `force_all` so a rollback state forces every phase to redeploy regardless of code diff.
+4. **deploy** — assumes the role, runs `cdk bootstrap` if needed, then executes the three phases below.
 
-The deploy job uses `ubuntu-24.04-arm` runner because agent and chatbot Docker images target `linux/arm64` (Fargate ARM64 + AgentCore). Building natively on ARM avoids QEMU emulation failures during `npm ci` with native modules.
+The deploy job runs on `ubuntu-24.04-arm` because agent and chatbot Docker images target `linux/arm64` (Fargate ARM64 + AgentCore). Building natively on ARM avoids QEMU emulation failures during `npm ci` with native modules.
+
+### Deploy phases
+
+| Phase | What                                                                                  | When it runs                                         |
+|------:|---------------------------------------------------------------------------------------|------------------------------------------------------|
+| 1     | `cdk deploy ecr observability data api gateway -c imageTag=<sha>`                     | first run, force, or change to `cdk` / `lambda` / `chatbot` |
+| 2a    | ECR login + `docker buildx build --platform linux/arm64 --push` for langgraph / strands / chatbot (whichever changed) | corresponding agent or chatbot folder changed |
+| 2b    | Retag `:latest` → `:<sha>` for any image that did *not* rebuild                       | partial rebuild path so all stacks share one tag     |
+| 3     | `cdk deploy agents fargate ui -c imageTag=<sha>`                                      | first run, force, or change to `cdk` / `langgraph` / `strands` / `chatbot` |
+
+Phase 1 is *not* run with `-c skipAgents=true`. The flag tells `app.ts` to skip constructing `AgentStack` at synth time, which makes the ECR exports look unused and CDK tries to delete them — and the live `AgentStack` in AWS still consumes those exports, so the deploy aborts and rolls back. Instead, every stack is constructed at synth time and `cdk deploy` only deploys the names it's given.
+
+### Stack-health auto-recovery
+
+Without the `stack_health` job, the change-detection step would skip Phase 1 entirely on commits that didn't touch watched paths — even when the live stack was sitting in `UPDATE_ROLLBACK_COMPLETE` from a prior failure. Result: no recovery, the broken state persisted, and the workflow showed green. The pre-flight check forces a full redeploy whenever any project stack is unhealthy, so a follow-up commit (or a manual `workflow_dispatch` re-run) reliably recovers a broken environment.
 
 ## One-time setup (per account)
 

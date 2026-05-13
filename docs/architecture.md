@@ -102,18 +102,19 @@ flowchart LR
 
 ## Stacks
 
-The app is broken into five CloudFormation stacks under `cdk/lib/`,
+The app is broken into eight CloudFormation stacks under `cdk/lib/`,
 wired from `cdk/bin/app.ts`:
 
-| Stack         | File                  | Purpose                                                       |
-|---------------|-----------------------|---------------------------------------------------------------|
-| `DataStack`   | `data-stack.ts`       | All DynamoDB tables. No dependencies.                         |
-| `ApiStack`    | `api-stack.ts`        | API Gateway + four Python Lambdas. Depends on DataStack.      |
-| `EcrStack`    | `ecr-stack.ts`        | Named ECR repos (one per agent image). No dependencies.       |
-| `AgentStack`  | `agent-stack.ts`      | AgentCore runtimes referencing tagged images in EcrStack repos. |
-| `GatewayStack`| `gateway-stack.ts`    | AgentCore Gateway (MCP) + 4 GatewayTargets pointing to Lambdas. |
-| `AppRunnerStack` | `apprunner-stack.ts` | App Runner service for the Next.js chatbot BFF.                |
-| `UiStack`     | `ui-stack.ts`         | CloudFront + S3 hosting the static UIs (device-sim, admin).   |
+| Stack                | File                       | Purpose                                                       |
+|----------------------|----------------------------|---------------------------------------------------------------|
+| `DataStack`          | `data-stack.ts`            | All DynamoDB tables. No dependencies.                         |
+| `ApiStack`           | `api-stack.ts`             | API Gateway + four Python Lambdas. Depends on DataStack.      |
+| `EcrStack`           | `ecr-stack.ts`             | Named ECR repos (one per agent image, plus chatbot). No deps. |
+| `AgentStack`         | `agent-stack.ts`           | AgentCore runtimes referencing tagged images in EcrStack repos. |
+| `GatewayStack`       | `gateway-stack.ts`         | AgentCore Gateway (MCP) + 4 GatewayTargets pointing to Lambdas. |
+| `FargateStack`       | `fargate-stack.ts`         | ECS Fargate + ALB hosting the Next.js chatbot BFF.            |
+| `ObservabilityStack` | `observability-stack.ts`   | Account/region-scoped Application Signals discovery (one-shot). |
+| `UiStack`            | `ui-stack.ts`              | CloudFront + S3 hosting the static UIs (device-sim, admin).   |
 
 Deployment order: `EcrStack` must exist before images are pushed, and
 images must be pushed before `AgentStack` is deployed. CI handles this
@@ -186,11 +187,13 @@ AgentCore Gateway replaces it entirely in production.
 | `aiops-cat-demo-strands`       | `agents/strands/`        |
 
 Lifecycle policy on each repo keeps the last 10 tagged images and
-expires untagged images after 7 days. CI builds `linux/amd64` images,
-tags them with the commit SHA, and pushes them to the matching repo
-between the first and second CDK deploy phases. `AgentStack` reads
-`-c imageTag=<sha>` to know which tag to reference in the
-`AWS::BedrockAgentCore::Runtime` resources.
+expires untagged images after 7 days. CI builds `linux/arm64` images on
+the `ubuntu-24.04-arm` runner (Fargate ARM64 + AgentCore both run
+ARM64), tags them with the commit SHA and `:latest`, and pushes them to
+the matching repo between the first and second CDK deploy phases.
+`AgentStack` and `FargateStack` read `-c imageTag=<sha>` to know which
+tag to reference in their `AWS::BedrockAgentCore::Runtime` and Fargate
+task-definition resources.
 
 | Runtime      | Role                                                         |
 |--------------|--------------------------------------------------------------|
@@ -229,10 +232,28 @@ startup. Tool calls flow through the MCP Server to the REST API, so
 injecting a bug in a Lambda shows up in both direct API traffic and
 agent-mediated traffic — useful for comparing investigation approaches.
 
+**Per-request MCP client construction.** Both runtimes build the MCP
+client *and* the agent inside the request handler, not at module or
+lifespan startup. Strands' `MCPClient.start()` snapshots `contextvars`
+when its background thread spawns; constructing the client at import
+time captures an empty OTel context, so every later tool call lands in
+a fresh trace and orphans the Gateway spans from the agent span.
+Building per-request makes the background thread inherit the runtime's
+active server span, so traces stay connected end-to-end (matches the
+AWS sample `sample-smart-home-assistant-agent-on-agentcore`). LangGraph
+gets the same restructure, which also refreshes SigV4 credentials per
+request — fixing a latent bug where lifespan-time auth would carry
+expired credentials after ~1 h on long-running runtimes.
+
 AgentCore is declared with `AWS::BedrockAgentCore::Runtime` via
 `CfnResource` since a CDK L2 construct isn't available yet. The
 runtime's execution role is granted `ecr:GetDownloadUrlForLayer` +
-`ecr:BatchGetImage` on each repo via `Repository.grantPull`.
+`ecr:BatchGetImage` on each repo via `Repository.grantPull`, plus
+`bedrock:InvokeModel`, `bedrock:InvokeModelWithResponseStream`, and
+`bedrock:CountTokens` on `*` (CountTokens is required by ADOT's
+botocore patch to populate `gen_ai.usage.*` span attributes; without
+it every model invocation trips an `AccessDeniedException` stack
+trace and the GenAI dashboard's token panels stay empty).
 
 ## UI layer
 
@@ -312,9 +333,11 @@ main       --fast-forward-> release  --push-->  GHA (env: release)  --OIDC-->  p
 
 Each workflow run executes three phases in order:
 
-1. **Deploy non-agent stacks.** `cdk deploy ecr data api gateway ui -c skipAgents=true`. This creates (or updates) the named ECR repos, DynamoDB tables, REST API + Lambdas, AgentCore Gateway + targets, and the CloudFront-fronted UI bucket.
-2. **Build and push agent images.** `docker buildx build --platform linux/amd64 --push` for each of `agents/{langgraph,strands}`, tagged with the commit SHA. Images land in the repos created in phase 1.
-3. **Deploy AgentStack.** `cdk deploy agents -c imageTag=<sha>`. The stack reads the tag from CDK context and points `AWS::BedrockAgentCore::Runtime` resources at the already-pushed images. Runtimes receive the Gateway URL via `MCP_SERVER_URL` env var.
+1. **Deploy non-agent stacks.** `cdk deploy ecr observability data api gateway`. This creates (or updates) the named ECR repos, the Application Signals discovery resource, DynamoDB tables, REST API + Lambdas, and AgentCore Gateway + targets. Note: `-c skipAgents=true` is *not* passed here — `app.ts` always synthesizes every stack so the cross-stack ECR exports stay stable. Phase 1 just names the stacks it wants to deploy.
+2. **Build and push images.** `docker buildx build --platform linux/arm64 --push` for `agents/{langgraph,strands}` and `ui/chatbot`, tagged with the commit SHA (and `:latest`). Images land in the repos created in phase 1.
+3. **Deploy agent + UI stacks.** `cdk deploy agents fargate ui -c imageTag=<sha>`. The stacks read the tag from CDK context and point `AWS::BedrockAgentCore::Runtime` and the Fargate task definition at the already-pushed images. Runtimes receive the Gateway URL via `MCP_SERVER_URL`.
+
+A pre-flight `stack_health` job runs before phase 1: it queries CloudFormation for any `aiops-cat-demo-*` stack in a failed/rollback state and, if found, forces every phase to redeploy regardless of code diff. This fixes the case where a prior run left a stack in `UPDATE_ROLLBACK_COMPLETE` and the change-detection logic would otherwise skip recovery.
 
 `cdk bootstrap` is expected to have been run once per account/region
 already; CI does not re-bootstrap on every run.
@@ -347,18 +370,25 @@ X-Ray traces, agent invocation logs, CloudFront access logs).
 
 ## Observability defaults
 
-| Signal                   | Where                                                    |
-|--------------------------|----------------------------------------------------------|
-| Lambda logs              | `/aws/lambda/<function-name>` (1-week retention)         |
-| Lambda + API X-Ray       | Active tracing on every Lambda and the API Gateway stage |
-| API Gateway metrics      | CloudWatch, including per-method latency / 4xx / 5xx     |
-| AgentCore runtime logs   | CloudWatch (auto-provisioned by the service)             |
-| AgentCore Gateway traces | X-Ray via CloudWatch Logs delivery (TRACES → XRAY)       |
-| CloudFront access logs   | Off by default — enable per investigation if needed      |
-| DynamoDB metrics         | Standard CloudWatch metrics on each table                |
+| Signal                       | Where                                                                |
+|------------------------------|----------------------------------------------------------------------|
+| Lambda logs                  | `/aws/lambda/<function-name>` (1-week retention), JSON-structured via Powertools `Logger` (auto-stamps `xray_trace_id`, `function_request_id`, `cold_start`). |
+| Lambda + API X-Ray           | Active tracing on every Lambda and the API Gateway stage.            |
+| Lambda Application Signals   | Each Lambda is wrapped with the AWSOpenTelemetryDistroPython layer (`AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument`) and the `CloudWatchLambdaApplicationSignalsExecutionRolePolicy` managed policy. Region→layer-ARN table lives in `cdk/lib/observability.ts`. |
+| Lambda business metrics (EMF)| Each handler emits per-service Powertools `Metrics` to stdout — e.g. `cat-profile` → `CatProfilesRead/Written`, `device` → `DevicesCommanded/DeviceWriteSuccess`, `feeding` → `FeedingsRead/Created`, `health` → `HealthMetricsRead/HealthAlertsRead`. `DeviceWriteSuccess` only fires after `put_item` confirms — silent-swallow bugs drop the metric below band. |
+| API Gateway access logs      | Line-delimited JSON to `/aws/apigateway/cat-demo-access` (7-day retention) with the fields needed for Logs Insights joins on `xrayTraceId` / `requestId`. |
+| API Gateway metrics          | CloudWatch, including per-method latency / 4xx / 5xx.                |
+| Application Signals discovery| `ObservabilityStack` owns a single account/region `CfnDiscovery` so the Service Map populates. Required exactly once per account+region. |
+| AgentCore runtime logs       | CloudWatch (auto-provisioned by the service).                        |
+| AgentCore Gateway traces     | X-Ray via CloudWatch Logs delivery (TRACES → XRAY); requires Transaction Search enabled (one-time per account, see CICD.md). |
+| GenAI usage attributes       | ADOT's botocore patch calls `bedrock:CountTokens` around `InvokeModel`/`Converse` to populate `gen_ai.usage.input_tokens`/`output_tokens` on agent spans. The AgentCore execution role grants `bedrock:CountTokens`; the foundation-model id is used (not the cross-region `us.` inference profile) because CountTokens rejects inference-profile ids. |
+| CloudFront access logs       | Off by default — enable per investigation if needed.                 |
+| DynamoDB metrics             | Standard CloudWatch metrics on each table.                           |
 
-No custom dashboards ship with the stack; the AIOps tooling under
-investigation is expected to build its own view from these primitives.
+No custom dashboards ship with the stack yet; Phase 4 of the
+`observability` spec adds dashboards, alarms, anomaly detectors, and an
+SNS topic. The AIOps tooling under investigation is otherwise expected
+to build its own view from these primitives.
 
 ## What this repo deliberately does *not* include
 

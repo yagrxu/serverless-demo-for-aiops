@@ -360,17 +360,22 @@ Lambda → DynamoDB (IAM Role, dynamodb:GetItem/PutItem/Query/Scan)
 
 ```bash
 cd cdk && npm ci
+TAG=$(git rev-parse HEAD)
 
-# Phase 1: 基础设施
-npx cdk deploy aiops-cat-demo-ecr aiops-cat-demo-data aiops-cat-demo-api \
-  aiops-cat-demo-gateway aiops-cat-demo-ui -c skipAgents=true
+# Phase 1: 基础设施 (注意：不要传 -c skipAgents=true，
+# 否则 ECR 跨栈 exports 会被识别为未使用而尝试删除)
+npx cdk deploy aiops-cat-demo-ecr aiops-cat-demo-observability \
+  aiops-cat-demo-data aiops-cat-demo-api aiops-cat-demo-gateway \
+  -c imageTag=$TAG
 
-# Phase 2: 构建并推送 agent 镜像
-docker buildx build --platform linux/amd64 --push agents/langgraph
-docker buildx build --platform linux/amd64 --push agents/strands
+# Phase 2: 构建并推送镜像 (linux/arm64，因为 Fargate 和 AgentCore 都是 ARM64)
+docker buildx build --platform linux/arm64 --push agents/langgraph
+docker buildx build --platform linux/arm64 --push agents/strands
+docker buildx build --platform linux/arm64 --push ui/chatbot
 
-# Phase 3: 部署 agent 运行时
-npx cdk deploy aiops-cat-demo-agents -c imageTag=$TAG
+# Phase 3: 部署消费镜像的栈
+npx cdk deploy aiops-cat-demo-agents aiops-cat-demo-fargate \
+  aiops-cat-demo-ui -c imageTag=$TAG
 ```
 
 ---

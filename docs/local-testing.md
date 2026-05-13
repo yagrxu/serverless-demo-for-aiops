@@ -200,7 +200,9 @@ credentials configured. Set `AWS_PROFILE` or export `AWS_ACCESS_KEY_ID`
 **Agent logs `AccessDeniedException: bedrock:InvokeModel`** — your AWS
 profile doesn't have Bedrock model access in us-east-1, or the specific
 model isn't enabled in the console. Model access is per-region and
-per-account. Default model is `us.anthropic.claude-sonnet-4-6`.
+per-account. Default model is `anthropic.claude-haiku-4-5-20251001-v1:0`
+(plain foundation id, not the `us.` cross-region inference profile —
+ADOT's `bedrock:CountTokens` rejects inference-profile ids).
 
 **UI shows CORS error** — the API shim adds `Access-Control-Allow-Origin: *`
 and compose publishes port `:8000`. Check that `curl http://localhost:8000/cats`

@@ -1,4 +1,16 @@
 {
   "mcpServers": {
+    "aws-knowledge-mcp-server": {
+      "url": "https://knowledge-mcp.global.api.aws",
+      "type": "http",
+      "disabled": false,
+      "autoApprove": [
+        "aws___search_documentation",
+        "aws___search_documentation",
+        "aws___search_documentation",
+        "aws___search_documentation",
+        "aws___read_documentation"
+      ]
+    }
   }
 }

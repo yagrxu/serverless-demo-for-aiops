@@ -76,9 +76,9 @@ AWS_PROFILE=cloudops-demo npx cdk deploy --all
 
 Agent images are *not* built by CDK. Deployment is three phases:
 
-1. `cdk deploy ...ecr ...data ...api ...ui -c skipAgents=true` — creates named ECR repos and the non-agent stacks.
-2. `docker buildx build --platform linux/amd64 --push` each of `agents/{langgraph,strands,entrypoint}` to its repo, tagged with the commit SHA.
-3. `cdk deploy ...agents -c imageTag=<sha>` — AgentStack reads the tag from context and wires the `AWS::BedrockAgentCore::Runtime` resources to the pushed images.
+1. `cdk deploy ...ecr ...observability ...data ...api ...gateway -c imageTag=<sha>` — creates named ECR repos, the Application Signals discovery resource, and the non-agent stacks. Do NOT pass `-c skipAgents=true`; `app.ts` must always synthesize every stack so the cross-stack ECR exports stay stable, and `cdk deploy` only deploys the names you list.
+2. `docker buildx build --platform linux/arm64 --push` each of `agents/{langgraph,strands}` and `ui/chatbot` to its repo, tagged with the commit SHA and `:latest` (Fargate ARM64 + AgentCore both run ARM64).
+3. `cdk deploy ...agents ...fargate ...ui -c imageTag=<sha>` — `AgentStack` and `FargateStack` read the tag from context and wire the `AWS::BedrockAgentCore::Runtime` resources and the Fargate task definition to the pushed images.
 
 CI (`deploy.yml`) automates all three phases. Docker must be running for the local workflow; CI runners have it.
 
