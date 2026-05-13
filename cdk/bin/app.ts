@@ -7,6 +7,7 @@ import { AgentStack } from '../lib/agent-stack';
 import { EcrStack } from '../lib/ecr-stack';
 import { UiStack } from '../lib/ui-stack';
 import { FargateStack } from '../lib/fargate-stack';
+import { ObservabilityStack } from '../lib/observability-stack';
 import { defaultConfig } from '../lib/config';
 
 const app = new cdk.App();
@@ -30,6 +31,11 @@ const imageTag = (app.node.tryGetContext('imageTag') as string) || 'latest';
 const skipAgents = app.node.tryGetContext('skipAgents') === 'true';
 
 const ecr = new EcrStack(app, `${cfg.projectName}-ecr`, cfg.projectName, { env });
+
+// Observability_Stack — account/region-scoped observability resources.
+// Currently just the Application Signals discovery construct; future
+// phases will add dashboards, alarms, the SNS topic, etc.
+new ObservabilityStack(app, `${cfg.projectName}-observability`, { env });
 
 const data = new DataStack(app, `${cfg.projectName}-data`, { env });
 

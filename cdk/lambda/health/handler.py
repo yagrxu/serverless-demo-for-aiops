@@ -7,8 +7,14 @@ Routes:
 import json
 import os
 from decimal import Decimal
+
 import boto3
 from boto3.dynamodb.conditions import Key
+from aws_lambda_powertools import Logger, Metrics
+from aws_lambda_powertools.metrics import MetricUnit
+
+logger = Logger(service="health")
+metrics = Metrics(namespace="CatDemo", service="health")
 
 _ddb_kwargs = {"endpoint_url": os.environ["DDB_ENDPOINT"]} if os.environ.get("DDB_ENDPOINT") else {}
 _ddb = boto3.resource("dynamodb", **_ddb_kwargs)
@@ -50,6 +56,7 @@ def _dispatch_gateway(event, context):
                 ScanIndexForward=False,
                 Limit=100,
             )
+            metrics.add_metric(name="HealthMetricsRead", unit=MetricUnit.Count, value=1)
             return res.get("Items", [])
 
         elif tool_name == "get_health_alerts":
@@ -60,16 +67,19 @@ def _dispatch_gateway(event, context):
                 KeyConditionExpression=Key("cat_id").eq(cat_id),
                 Limit=50,
             )
+            metrics.add_metric(name="HealthAlertsRead", unit=MetricUnit.Count, value=1)
             return res.get("Items", [])
 
         else:
             return {"error": f"unknown tool: {tool_name}"}
     except Exception as e:
+        logger.exception("gateway tool failed", extra={"tool": tool_name})
         return {"error": str(e)}
 
 
+@logger.inject_lambda_context
+@metrics.log_metrics(capture_cold_start_metric=True)
 def lambda_handler(event, _ctx):
-    # AgentCore Gateway dispatch
     if hasattr(_ctx, 'client_context') and _ctx.client_context and hasattr(_ctx.client_context, 'custom') and _ctx.client_context.custom and 'bedrockAgentCoreToolName' in _ctx.client_context.custom:
         result = _dispatch_gateway(event, _ctx)
         return json.dumps(result, default=_default)
@@ -87,6 +97,7 @@ def lambda_handler(event, _ctx):
             ScanIndexForward=False,
             Limit=100,
         )
+        metrics.add_metric(name="HealthMetricsRead", unit=MetricUnit.Count, value=1)
         return _resp(200, res.get("Items", []))
 
     if path == "/health/{cat_id}/alerts":
@@ -94,6 +105,7 @@ def lambda_handler(event, _ctx):
             KeyConditionExpression=Key("cat_id").eq(cat_id),
             Limit=50,
         )
+        metrics.add_metric(name="HealthAlertsRead", unit=MetricUnit.Count, value=1)
         return _resp(200, res.get("Items", []))
 
     return _resp(404, {"message": "not found"})

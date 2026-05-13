@@ -5,6 +5,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as path from 'path';
+import { applyApplicationSignalsToLambda } from './observability';
 
 export interface ApiStackProps extends cdk.StackProps {
   catProfiles: dynamodb.Table;
@@ -41,11 +42,24 @@ export class ApiStack extends cdk.Stack {
       logRetention: logs.RetentionDays.ONE_WEEK,
     };
 
+    // Bundle each handler with its requirements.txt so Powertools
+    // (Logger, Metrics) is available without per-region layer ARNs.
+    const bundledCode = (svcDir: string) =>
+      lambda.Code.fromAsset(path.join(__dirname, '../lambda', svcDir), {
+        bundling: {
+          image: lambda.Runtime.PYTHON_3_12.bundlingImage,
+          command: [
+            'bash', '-c',
+            'pip install --no-cache-dir -r requirements.txt -t /asset-output && cp -au . /asset-output',
+          ],
+        },
+      });
+
     // --- cat-profile ---
     const catFn = new lambda.Function(this, 'CatProfileFn', {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/cat-profile')),
+      code: bundledCode('cat-profile'),
       environment: { CAT_PROFILES_TABLE: props.catProfiles.tableName, CAT_NAME_INDEX_TABLE: props.catNameIndex.tableName },
     } as lambda.FunctionProps);
     props.catProfiles.grantReadWriteData(catFn);
@@ -55,7 +69,7 @@ export class ApiStack extends cdk.Stack {
     const deviceFn = new lambda.Function(this, 'DeviceFn', {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/device')),
+      code: bundledCode('device'),
       environment: {
         DEVICES_TABLE: props.devices.tableName,
         DEVICE_TELEMETRY_TABLE: props.deviceTelemetry.tableName,
@@ -68,7 +82,7 @@ export class ApiStack extends cdk.Stack {
     const feedingFn = new lambda.Function(this, 'FeedingFn', {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/feeding')),
+      code: bundledCode('feeding'),
       environment: { FEEDING_EVENTS_TABLE: props.feedingEvents.tableName },
     } as lambda.FunctionProps);
     props.feedingEvents.grantReadWriteData(feedingFn);
@@ -77,7 +91,7 @@ export class ApiStack extends cdk.Stack {
     const healthFn = new lambda.Function(this, 'HealthFn', {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
-      code: lambda.Code.fromAsset(path.join(__dirname, '../lambda/health')),
+      code: bundledCode('health'),
       environment: {
         HEALTH_METRICS_TABLE: props.healthMetrics.tableName,
         HEALTH_ALERTS_TABLE: props.healthAlerts.tableName,
@@ -86,6 +100,13 @@ export class ApiStack extends cdk.Stack {
     props.healthMetrics.grantReadWriteData(healthFn);
     props.healthAlerts.grantReadWriteData(healthFn);
 
+    // Wire CloudWatch Application Signals onto every Lambda. The helper
+    // is region-portable — it picks the right ADOT layer ARN for the
+    // stack's region and attaches the managed policy.
+    for (const fn of [catFn, deviceFn, feedingFn, healthFn]) {
+      applyApplicationSignalsToLambda(fn);
+    }
+
     // Expose Lambda ARNs for GatewayStack
     this.catProfileFnArn = catFn.functionArn;
     this.deviceFnArn = deviceFn.functionArn;
@@ -93,12 +114,38 @@ export class ApiStack extends cdk.Stack {
     this.healthFnArn = healthFn.functionArn;
 
     // --- API Gateway ---
+    // JSON access logs to a dedicated log group so Logs Insights queries
+    // can join on $context.requestId / $context.xrayTraceId. Required
+    // fields per design §API Gateway access log JSON format.
+    const apiAccessLogs = new logs.LogGroup(this, 'ApiAccessLogs', {
+      logGroupName: '/aws/apigateway/cat-demo-access',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const accessLogFormat = JSON.stringify({
+      requestId:         '$context.requestId',
+      extendedRequestId: '$context.extendedRequestId',
+      status:            '$context.status',
+      resourcePath:      '$context.resourcePath',
+      httpMethod:        '$context.httpMethod',
+      responseLatency:   '$context.responseLatency',
+      integrationStatus: '$context.integrationStatus',
+      integrationLatency:'$context.integrationLatency',
+      requestTime:       '$context.requestTime',
+      sourceIp:          '$context.identity.sourceIp',
+      userAgent:         '$context.identity.userAgent',
+      xrayTraceId:       '$context.xrayTraceId',
+    });
+
     this.api = new apigateway.RestApi(this, 'Api', {
       restApiName: 'cat-demo-api',
       deployOptions: {
         stageName: 'prod',
         tracingEnabled: true,
         metricsEnabled: true,
+        accessLogDestination: new apigateway.LogGroupLogDestination(apiAccessLogs),
+        accessLogFormat: apigateway.AccessLogFormat.custom(accessLogFormat),
       },
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,

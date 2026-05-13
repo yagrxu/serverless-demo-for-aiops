@@ -1,0 +1,11 @@
+# Lambda dependencies. boto3 is provided by the Python 3.12 runtime, so
+# we only declare what we add on top: Powertools for structured JSON
+# logging (auto-stamps xray_trace_id / function_request_id) and EMF
+# business metrics in the CatDemo namespace.
+#
+# Powertools v3 ships Logger + Metrics in the base install (no extras
+# needed). Do NOT install the [tracer] extra — ADOT (via the
+# AWSOpenTelemetryDistroPython layer) owns tracing. Mixing both produces
+# duplicate spans and conflicting X-Ray context.
+aws-lambda-powertools>=3.0.0,<4.0.0
+
