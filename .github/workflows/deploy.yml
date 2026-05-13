@@ -243,13 +243,18 @@ jobs:
         run: npm run build
 
       # ===================================================================
-      # Phase 1: Non-agent stacks (ECR, Data, API, Gateway, UI)
+      # Phase 1: Non-agent infrastructure stacks (ECR, Data, API, Gateway)
       # We do NOT pass `-c skipAgents=true` here. When the flag is true,
       # app.ts skips constructing AgentStack entirely, which makes the
       # ECR exports look unused and CDK tries to delete them — breaking
       # the second and later runs because the live AgentStack in AWS is
       # still referencing those exports. Instead, construct every stack
       # at synth time and let `cdk deploy` only deploy the ones we name.
+      #
+      # Observability_Stack is intentionally NOT in this phase: it
+      # depends on UiStack (CloudFront 5xx alarm 6.10) and on AgentStack
+      # being deployed before its dashboards reference real runtime log
+      # groups. It deploys in Phase 4 after Fargate + UI.
       # ===================================================================
       - name: "Phase 1: Deploy infrastructure stacks"
         if: >-
@@ -262,7 +267,6 @@ jobs:
           # this image tag is also the one Phase 3 will deploy with.
           npx cdk deploy \
             ${PROJECT_NAME}-ecr \
-            ${PROJECT_NAME}-observability \
             ${PROJECT_NAME}-data \
             ${PROJECT_NAME}-api \
             ${PROJECT_NAME}-gateway \
@@ -334,17 +338,36 @@ jobs:
           retag chatbot   "$CHG_CHATBOT"
 
       # ===================================================================
-      # Phase 3: Deploy agent + chatbot stacks
+      # Phase 3: Deploy agents (most-frequently-changing stack — pulled
+      # out so a pure agent code change skips fargate/ui/observability).
       # ===================================================================
-      - name: "Phase 3: Deploy agents + fargate + UI"
+      - name: "Phase 3: Deploy agents"
         if: >-
           env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
-          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true'
         working-directory: cdk
         run: |
           npx cdk deploy \
             ${PROJECT_NAME}-agents \
+            --require-approval never \
+            -c imageTag=${{ github.sha }}
+
+      # ===================================================================
+      # Phase 4: Deploy fargate + UI + observability.
+      # Observability_Stack must come after UiStack because alarm 6.10
+      # references the CloudFront distribution. Fargate also needs the
+      # runtime ARNs from AgentStack (Phase 3) when deployAgents=true.
+      # ===================================================================
+      - name: "Phase 4: Deploy fargate + UI + observability"
+        if: >-
+          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
+          env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true' ||
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true'
+        working-directory: cdk
+        run: |
+          npx cdk deploy \
             ${PROJECT_NAME}-fargate \
             ${PROJECT_NAME}-ui \
+            ${PROJECT_NAME}-observability \
             --require-approval never \
             -c imageTag=${{ github.sha }}

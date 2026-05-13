@@ -32,11 +32,6 @@ const skipAgents = app.node.tryGetContext('skipAgents') === 'true';
 
 const ecr = new EcrStack(app, `${cfg.projectName}-ecr`, cfg.projectName, { env });
 
-// Observability_Stack — account/region-scoped observability resources.
-// Currently just the Application Signals discovery construct; future
-// phases will add dashboards, alarms, the SNS topic, etc.
-new ObservabilityStack(app, `${cfg.projectName}-observability`, { env });
-
 const data = new DataStack(app, `${cfg.projectName}-data`, { env });
 
 const api = new ApiStack(app, `${cfg.projectName}-api`, {
@@ -49,6 +44,11 @@ const api = new ApiStack(app, `${cfg.projectName}-api`, {
   healthMetrics: data.healthMetrics,
   healthAlerts: data.healthAlerts,
 });
+
+// Observability_Stack is created at the END of app.ts so it can take
+// references from every other stack (Lambdas, DDB tables, CloudFront
+// distribution). It owns Application Signals discovery, the three
+// persona dashboards, the SNS alarm topic, and all alarms 6.1–6.10.
 
 const gateway = new GatewayStack(app, `${cfg.projectName}-gateway`, {
   env,
@@ -94,9 +94,32 @@ if (cfg.deployAgents && !skipAgents) {
   chatbotAlbDnsName = fargate.albDnsName;
 }
 
-new UiStack(app, `${cfg.projectName}-ui`, {
+const ui = new UiStack(app, `${cfg.projectName}-ui`, {
   env,
   bundles: cfg.uiBundles,
   apiUrl: api.api.url,
   appRunnerServiceUrl: chatbotAlbDnsName,
+});
+
+new ObservabilityStack(app, `${cfg.projectName}-observability`, {
+  env,
+  projectName: cfg.projectName,
+  alarmEmail: cfg.alarmEmail,
+  lambdas: {
+    catProfile: api.catProfileFn,
+    device: api.deviceFn,
+    feeding: api.feedingFn,
+    health: api.healthFn,
+  },
+  tables: {
+    catProfiles: data.catProfiles,
+    catNameIndex: data.catNameIndex,
+    devices: data.devices,
+    deviceTelemetry: data.deviceTelemetry,
+    feedingEvents: data.feedingEvents,
+    healthMetrics: data.healthMetrics,
+    healthAlerts: data.healthAlerts,
+  },
+  apiAccessLogGroup: api.accessLogGroup,
+  cloudfrontDistribution: ui.distribution,
 });

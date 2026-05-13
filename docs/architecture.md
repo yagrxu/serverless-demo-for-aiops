@@ -113,7 +113,7 @@ wired from `cdk/bin/app.ts`:
 | `AgentStack`         | `agent-stack.ts`           | AgentCore runtimes referencing tagged images in EcrStack repos. |
 | `GatewayStack`       | `gateway-stack.ts`         | AgentCore Gateway (MCP) + 4 GatewayTargets pointing to Lambdas. |
 | `FargateStack`       | `fargate-stack.ts`         | ECS Fargate + ALB hosting the Next.js chatbot BFF.            |
-| `ObservabilityStack` | `observability-stack.ts`   | Account/region-scoped Application Signals discovery (one-shot). |
+| `ObservabilityStack` | `observability-stack.ts`   | Application Signals discovery, three persona dashboards (SRE / GenAI / Business), four saved Logs Insights queries, SNS alarm topic + 23 alarms (Phase 4), Contributor Insights enabled on `DeviceTelemetry` + `HealthMetrics`. |
 | `UiStack`            | `ui-stack.ts`              | CloudFront + S3 hosting the static UIs (device-sim, admin).   |
 
 Deployment order: `EcrStack` must exist before images are pushed, and
@@ -384,11 +384,45 @@ X-Ray traces, agent invocation logs, CloudFront access logs).
 | GenAI usage attributes       | ADOT's botocore patch calls `bedrock:CountTokens` around `InvokeModel`/`Converse` to populate `gen_ai.usage.input_tokens`/`output_tokens` on agent spans. The AgentCore execution role grants `bedrock:CountTokens`; the foundation-model id is used (not the cross-region `us.` inference profile) because CountTokens rejects inference-profile ids. |
 | CloudFront access logs       | Off by default — enable per investigation if needed.                 |
 | DynamoDB metrics             | Standard CloudWatch metrics on each table.                           |
+| Persona dashboards           | `ObservabilityStack` provisions three CloudWatch dashboards: `aiops-cat-demo-sre` (API GW 4xx/5xx, per-Lambda Duration/Errors/Throttles, per-table consumed/throttled capacity, plus an `AlarmStatusWidget` populated by Phase 4), `aiops-cat-demo-genai` (per-runtime `bedrock-agentcore` latency + token usage, p95 LangGraph vs Strands, slowest tool calls Logs Insights widget, Gateway target errors), and `aiops-cat-demo-business` (`CatDemo.FeedingsCreated`, `HealthAlertsRead`, `DevicesCommanded` KPIs plus per-service breakdown). |
+| Saved Logs Insights queries  | Four `QueryDefinition`s under the prefix `aiops-cat-demo/`: `A-all-errors-for-trace` (filter by `${trace_id}`), `B-slowest-tool-calls`, `C-ddb-throttles-by-table`, `D-injected-bug-marker`. |
 
-No custom dashboards ship with the stack yet; Phase 4 of the
-`observability` spec adds dashboards, alarms, anomaly detectors, and an
-SNS topic. The AIOps tooling under investigation is otherwise expected
-to build its own view from these primitives.
+### Phase 4 — alarm topology
+
+The SNS topic `aiops-cat-demo-alarms` receives every alarm action. Its
+access policy allows only `cloudwatch.amazonaws.com` to `sns:Publish`,
+scoped by `aws:SourceArn` to alarms in the same account/region. The
+single email subscriber comes from `config.alarmEmail` (defaults to
+`yagrxu@amazon.com`).
+
+The 23 alarms break down as follows:
+
+| Req | Count | Alarm | Source |
+|-----|-------|-------|--------|
+| 6.1 | 4 | Lambda Duration p99 anomaly band | per `FunctionName` |
+| 6.2 | 4 | Lambda Errors > 0 | per `FunctionName` |
+| 6.3 | 1 | API GW 5XXError anomaly band | aggregate, all paths |
+| 6.4 | 7 | DynamoDB ThrottledRequests > 0 | per `TableName` |
+| 6.5 | 1 | Bedrock ThrottlingException > 0 | account-wide |
+| 6.6 | 1 | `DeviceWriteSuccess` BELOW anomaly band | catches silent DDB swallows on telemetry writes |
+| 6.7 | 2 | Per-runtime InputTokens + OutputTokens anomaly band | catches LangGraph / Strands loops |
+| 6.8 | 1 | Gateway target invocation errors > 0 | catches misconfigured targets |
+| 6.9 | 1 | RUM JS error rate anomaly band | only useful after Phase 5 RUM lands |
+| 6.10 | 1 | CloudFront 5xxErrorRate > 1% over 5 minutes | aggregate distribution |
+
+Anomaly-band alarms need ~14 days of history to learn a useful
+boundary; expect them to sit in `INSUFFICIENT_DATA` until then. Static
+threshold alarms fire immediately. CloudFront, RUM, Gateway, and
+Bedrock alarms also remain in `INSUFFICIENT_DATA` until the
+corresponding traffic exists.
+
+Contributor Insights is enabled on `DeviceTelemetry` (hot-partition
+detection) and `HealthMetrics` (full-table-scan detection) with the
+default rule so the SRE dashboard can show top partitions during a bug
+scenario.
+
+Phase 5 adds RUM + the CloudFront origin request policy so the browser
+end of the trace lands on the GenAI dashboard's session view.
 
 ## What this repo deliberately does *not* include
 
