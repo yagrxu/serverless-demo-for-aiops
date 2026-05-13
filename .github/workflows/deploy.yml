@@ -43,9 +43,71 @@ jobs:
             echo "environment=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
+  stack_health:
+    name: Check stack health
+    needs: resolve
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve.outputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      needs_recovery: ${{ steps.check.outputs.needs_recovery }}
+      bad_stacks:     ${{ steps.check.outputs.bad_stacks }}
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: gha-stack-health
+
+      - id: check
+        name: Query CloudFormation stack statuses
+        env:
+          PROJECT_NAME: aiops-cat-demo
+        run: |
+          # Any stack status in this set means the previous deploy left
+          # the stack in an incomplete or rolled-back state. CloudFormation
+          # will refuse meaningful updates until we retry, so we force a
+          # full redeploy regardless of code diff.
+          BAD_STATES="CREATE_FAILED|ROLLBACK_COMPLETE|ROLLBACK_FAILED|UPDATE_ROLLBACK_COMPLETE|UPDATE_ROLLBACK_FAILED|UPDATE_FAILED|IMPORT_ROLLBACK_COMPLETE|IMPORT_ROLLBACK_FAILED"
+
+          # Fetch every stack whose name starts with the project prefix.
+          # --no-paginate is safe here; we have <10 stacks.
+          stacks_json=$(aws cloudformation list-stacks \
+            --region us-east-1 \
+            --stack-status-filter CREATE_COMPLETE CREATE_FAILED ROLLBACK_COMPLETE ROLLBACK_FAILED \
+              UPDATE_COMPLETE UPDATE_FAILED UPDATE_ROLLBACK_COMPLETE UPDATE_ROLLBACK_FAILED \
+              IMPORT_COMPLETE IMPORT_ROLLBACK_COMPLETE IMPORT_ROLLBACK_FAILED \
+            --query "StackSummaries[?starts_with(StackName, \`${PROJECT_NAME}\`)].[StackName,StackStatus]" \
+            --output text)
+
+          bad=""
+          while IFS=$'\t' read -r name status; do
+            [ -z "$name" ] && continue
+            echo "  $name → $status"
+            if echo "$status" | grep -qE "^(${BAD_STATES})\$"; then
+              bad="$bad $name"
+            fi
+          done <<< "$stacks_json"
+
+          if [ -n "$bad" ]; then
+            echo ""
+            echo "!! Found stacks in failed/rollback state:$bad"
+            echo "   Will force a full redeploy to recover."
+            echo "needs_recovery=true" >> "$GITHUB_OUTPUT"
+            echo "bad_stacks=$bad" >> "$GITHUB_OUTPUT"
+          else
+            echo ""
+            echo ">> All stacks healthy."
+            echo "needs_recovery=false" >> "$GITHUB_OUTPUT"
+            echo "bad_stacks=" >> "$GITHUB_OUTPUT"
+          fi
+
   changes:
     name: Detect changes
-    needs: resolve
+    needs: [resolve, stack_health]
     runs-on: ubuntu-latest
     outputs:
       cdk:        ${{ steps.filter.outputs.cdk }}
@@ -65,9 +127,15 @@ jobs:
         env:
           BEFORE: ${{ github.event.before }}
           FORCE: ${{ inputs.force_all }}
+          RECOVERY: ${{ needs.stack_health.outputs.needs_recovery }}
         run: |
-          if [ "${FORCE}" = "true" ]; then
+          # force_all = true when the dispatch asked for it OR when any
+          # aiops-cat-demo-* stack is in a failed/rollback state.
+          if [ "${FORCE}" = "true" ] || [ "${RECOVERY}" = "true" ]; then
             echo "force_all=true" >> "$GITHUB_OUTPUT"
+            if [ "${RECOVERY}" = "true" ]; then
+              echo ">> stack_health reported recovery needed; forcing full redeploy."
+            fi
           else
             echo "force_all=false" >> "$GITHUB_OUTPUT"
           fi
