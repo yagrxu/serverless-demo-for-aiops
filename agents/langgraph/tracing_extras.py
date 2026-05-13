@@ -1,36 +1,40 @@
-"""Local-friendly OTel extras.
+"""Local-friendly OTel extras for the LangGraph agent.
 
 Adds a CodeMetadataSpanProcessor that tags every span with the Python
 source file, line number, and function name that started it. Useful for
 local debugging where you want to click a span in the console and find
 the exact line that produced it.
 
-This module is designed to coexist safely with `opentelemetry-instrument`:
+Three startup modes are supported:
 
-- In the cloud (AgentCore Runtime): the Dockerfile CMD uses
-  `opentelemetry-instrument`, which installs a real SDK TracerProvider
-  before user code runs. We attach our processor to that existing
-  provider — no second provider, no double-spans.
+1. Cloud (AgentCore Runtime) — the runtime injects the full OTel env
+   and the container CMD wraps the process with `opentelemetry-instrument`.
+   A real SDK TracerProvider is set up before user code imports. We
+   detect it (has `add_span_processor`) and just attach our processor.
+   Framework instrumentation is handled by
+   opentelemetry-instrumentation-langchain which is auto-loaded.
 
-- Locally with `opentelemetry-instrument`: same as cloud.
+2. Local with `opentelemetry-instrument` — same as cloud.
 
-- Locally with plain `uvicorn server:app` (e.g., `up.sh` without the
-  wrapper): no SDK provider exists, so `trace.get_tracer_provider()`
-  returns a `ProxyTracerProvider` that has no `add_span_processor`
-  method. We detect this and become a no-op — the agent runs without
-  tracing. To get traces locally, start the agent via
-  `opentelemetry-instrument uvicorn server:app ...`
-  (`start-agent.sh` does this by default).
+3. Local without any wrapper (plain `uvicorn server:app`) — no SDK
+   provider exists yet. We restore the old tracing.py setup:
+   - Create a TracerProvider with an OTLP HTTP exporter (Omni's local
+     collector is picked up via OTEL_EXPORTER_OTLP_ENDPOINT it injects).
+   - Activate LangChainInstrumentor so LangGraph spans are emitted.
+   - Attach the CodeMetadataSpanProcessor.
 
-Keep the CPU cost in mind: `on_start` walks up to 100 frames per span,
-which is fine for demo traffic but not free under load.
+The `add_span_processor` probe prevents the double-provider registration
+that broke the previous setup: we only construct a provider in Mode 3,
+where none exists.
 """
 
 import inspect
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.context import Context
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 
 class CodeMetadataSpanProcessor(SpanProcessor):
@@ -66,7 +70,25 @@ class CodeMetadataSpanProcessor(SpanProcessor):
 
 
 _provider = trace.get_tracer_provider()
+
 if hasattr(_provider, "add_span_processor"):
+    # Mode 1 or 2: opentelemetry-instrument (cloud or local-with-wrapper)
+    # already set up an SDK provider + auto-loaded the LangChain
+    # instrumentor. Attach only our metadata processor.
     _provider.add_span_processor(CodeMetadataSpanProcessor())
-# else: running without opentelemetry-instrument; no SDK provider
-# available. This module becomes a no-op.
+else:
+    # Mode 3: plain `uvicorn server:app` with no wrapper. Set up the full
+    # provider + framework instrumentation so local Omni trace collection
+    # keeps working (this mirrors the old tracing.py).
+    provider = TracerProvider()
+    provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    provider.add_span_processor(CodeMetadataSpanProcessor())
+    trace.set_tracer_provider(provider)
+
+    try:
+        from opentelemetry.instrumentation.langchain import LangChainInstrumentor
+        LangChainInstrumentor().instrument()
+    except ImportError:
+        # opentelemetry-instrumentation-langchain not installed locally.
+        # Tracing still works for non-LangChain code paths.
+        pass

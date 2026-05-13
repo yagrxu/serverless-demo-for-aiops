@@ -1,36 +1,38 @@
-"""Local-friendly OTel extras.
+"""Local-friendly OTel extras for the Strands agent.
 
 Adds a CodeMetadataSpanProcessor that tags every span with the Python
 source file, line number, and function name that started it. Useful for
 local debugging where you want to click a span in the console and find
 the exact line that produced it.
 
-This module is designed to coexist safely with `opentelemetry-instrument`:
+Three startup modes are supported:
 
-- In the cloud (AgentCore Runtime): the Dockerfile CMD uses
-  `opentelemetry-instrument`, which installs a real SDK TracerProvider
-  before user code runs. We attach our processor to that existing
-  provider — no second provider, no double-spans.
+1. Cloud (AgentCore Runtime) — the runtime injects the full OTel env
+   and the container CMD wraps the process with `opentelemetry-instrument`.
+   A real SDK TracerProvider is set up before user code imports. We
+   detect it (has `add_span_processor`) and just attach our processor.
+   Strands discovers the tracer provider via `trace.get_tracer` and
+   emits spans automatically because it was installed with [otel].
 
-- Locally with `opentelemetry-instrument`: same as cloud.
+2. Local with `opentelemetry-instrument` — same as cloud.
 
-- Locally with plain `uvicorn server:app` (e.g., `up.sh` without the
-  wrapper): no SDK provider exists, so `trace.get_tracer_provider()`
-  returns a `ProxyTracerProvider` that has no `add_span_processor`
-  method. We detect this and become a no-op — the agent runs without
-  tracing. To get traces locally, start the agent via
-  `opentelemetry-instrument uvicorn server:app ...`
-  (`start-agent.sh` does this by default).
+3. Local without any wrapper (plain `uvicorn server:app`) — no SDK
+   provider exists yet. We restore the old tracing.py setup:
+   - Use Strands' own `StrandsTelemetry` helper to set up the provider +
+     OTLP HTTP exporter (Omni's local collector is picked up via
+     OTEL_EXPORTER_OTLP_ENDPOINT it injects).
+   - Attach the CodeMetadataSpanProcessor.
 
-Keep the CPU cost in mind: `on_start` walks up to 100 frames per span,
-which is fine for demo traffic but not free under load.
+The `add_span_processor` probe prevents the double-provider registration
+that broke the previous setup: we only construct a provider in Mode 3,
+where none exists.
 """
 
 import inspect
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 from opentelemetry.context import Context
+from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 
 
 class CodeMetadataSpanProcessor(SpanProcessor):
@@ -66,7 +68,33 @@ class CodeMetadataSpanProcessor(SpanProcessor):
 
 
 _provider = trace.get_tracer_provider()
+
 if hasattr(_provider, "add_span_processor"):
+    # Mode 1 or 2: opentelemetry-instrument has already set up the
+    # provider. Strands (installed with [otel]) will discover it. Attach
+    # only our metadata processor.
     _provider.add_span_processor(CodeMetadataSpanProcessor())
-# else: running without opentelemetry-instrument; no SDK provider
-# available. This module becomes a no-op.
+else:
+    # Mode 3: plain `uvicorn server:app` with no wrapper. Use Strands'
+    # built-in telemetry helper to set up the provider + exporter so
+    # local Omni trace collection keeps working (mirrors old tracing.py).
+    try:
+        from strands.telemetry.config import StrandsTelemetry
+
+        telemetry = StrandsTelemetry()
+        telemetry.setup_otlp_exporter()
+        telemetry.tracer_provider.add_span_processor(CodeMetadataSpanProcessor())
+    except ImportError:
+        # strands installed without [otel] extras. Fall back to a plain
+        # SDK provider so our own metadata processor still works on any
+        # manually-created spans.
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+
+        provider = TracerProvider()
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+        provider.add_span_processor(CodeMetadataSpanProcessor())
+        trace.set_tracer_provider(provider)
