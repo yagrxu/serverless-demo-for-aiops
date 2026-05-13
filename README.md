@@ -20,15 +20,18 @@ and investigated there. No env-var injection knobs.
 
 ```
 cdk/
-  bin/app.ts              # App entry — wires Data, Api, Agents, Ui stacks
+  bin/app.ts              # App entry — wires Data, Api, Agents, Fargate, Ui, Observability stacks
   lib/
     config.ts             # Project-wide knobs
     data-stack.ts         # DynamoDB tables
-    api-stack.ts          # API Gateway + Python Lambdas
-    ecr-stack.ts          # Named ECR repos for the two agent images
-    gateway-stack.ts      # AgentCore Gateway (MCP) + Lambda targets
+    api-stack.ts          # API Gateway + Python Lambdas (ADOT + Powertools)
+    ecr-stack.ts          # Named ECR repos for the agent + chatbot images
+    gateway-stack.ts      # AgentCore Gateway (MCP) + Lambda targets + X-Ray delivery
     agent-stack.ts        # AgentCore runtimes (langgraph, strands)
-    ui-stack.ts           # CloudFront + S3 for the three UIs
+    fargate-stack.ts      # ECS Fargate + ALB hosting the chatbot BFF
+    ui-stack.ts           # CloudFront + S3 for the device-sim and admin UIs
+    observability-stack.ts # Application Signals discovery (one-shot per account+region)
+    observability.ts      # Region→ADOT-layer-ARN table + Lambda wiring helpers
   lambda/
     cat-profile/          # Python handler — edit for source-level bug injection
     device/
@@ -76,33 +79,43 @@ pattern used in production.
 
 ## Deploy
 
-The AgentStack consumes image URIs from the named ECR repos, so the
-flow is three phases: create repos → build+push images → deploy agents.
-CI runs this automatically. For a local deploy:
+The AgentStack and FargateStack consume image URIs from the named ECR
+repos, so the flow is three phases: create repos → build+push images →
+deploy agent + UI stacks. CI runs this automatically. For a local
+deploy:
 
 ```bash
 cd cdk
 npm ci
 npx cdk synth
 
-# 1. Create ECR repos + the non-agent stacks (skip agents on first run)
+# 1. Create ECR repos + the non-agent stacks. Do NOT pass
+#    -c skipAgents=true; app.ts must always construct every stack so
+#    the cross-stack ECR exports stay stable. cdk deploy only deploys
+#    the names below.
 AWS_PROFILE=cloudops-demo npx cdk deploy \
-  aiops-cat-demo-ecr aiops-cat-demo-data aiops-cat-demo-api aiops-cat-demo-gateway aiops-cat-demo-ui \
-  -c skipAgents=true
+  aiops-cat-demo-ecr aiops-cat-demo-observability \
+  aiops-cat-demo-data aiops-cat-demo-api aiops-cat-demo-gateway \
+  -c imageTag=$(git rev-parse HEAD)
 
-# 2. Build and push each agent image (amd64) to its repo
+# 2. Build and push each image (linux/arm64) to its repo
 ACCOUNT=$(aws --profile cloudops-demo sts get-caller-identity --query Account --output text)
 TAG=$(git rev-parse HEAD)
 aws --profile cloudops-demo ecr get-login-password --region us-east-1 \
   | docker login --username AWS --password-stdin "$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com"
 for name in langgraph strands; do
-  docker buildx build --platform linux/amd64 \
+  docker buildx build --platform linux/arm64 \
     -t "$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/aiops-cat-demo-$name:$TAG" \
     --push "agents/$name"
 done
+docker buildx build --platform linux/arm64 \
+  -t "$ACCOUNT.dkr.ecr.us-east-1.amazonaws.com/aiops-cat-demo-chatbot:$TAG" \
+  --push "ui/chatbot"
 
-# 3. Deploy AgentStack pointing at the pushed tag
-AWS_PROFILE=cloudops-demo npx cdk deploy aiops-cat-demo-agents -c imageTag=$TAG
+# 3. Deploy the stacks that consume the pushed images
+AWS_PROFILE=cloudops-demo npx cdk deploy \
+  aiops-cat-demo-agents aiops-cat-demo-fargate aiops-cat-demo-ui \
+  -c imageTag=$TAG
 ```
 
 Or push a feature branch to the `test` pointer and let CI deploy:
