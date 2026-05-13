@@ -46,8 +46,11 @@ export class AgentStack extends cdk.Stack {
         'logs:CreateLogGroup',
         'logs:CreateLogStream',
         'logs:PutLogEvents',
+        'logs:DescribeLogGroups',
+        'logs:DescribeLogStreams',
         'xray:PutTraceSegments',
         'xray:PutTelemetryRecords',
+        'cloudwatch:PutMetricData',
       ],
       resources: ['*'],
     }));

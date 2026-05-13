@@ -4,9 +4,10 @@ Uses the Strands Agent class with BedrockModel and MCP client tools loaded
 dynamically from the MCP Server. The agent is built once at module level and
 reused across requests. Each invocation creates a fresh conversation (stateless
 per request).
-"""
 
-import tracing  # noqa: F401 — must be first import (OTel setup)
+OTel tracing is provided by `opentelemetry-instrument` which wraps the
+process via the Dockerfile CMD. No manual TracerProvider setup here.
+"""
 
 import asyncio
 import os

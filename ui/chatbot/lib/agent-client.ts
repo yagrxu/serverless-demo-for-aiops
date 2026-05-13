@@ -21,25 +21,29 @@ export function getAppConfig(): AppConfig {
 export async function invokeAgent(
   agent: 'langgraph' | 'strands',
   message: string,
-  config: AppConfig
+  config: AppConfig,
+  sessionId: string,
 ): Promise<string> {
   if (config.localMode) {
     const url = agent === 'langgraph' ? config.langgraphUrl : config.strandsUrl;
-    return invokeLocal(url, message);
+    return invokeLocal(url, message, sessionId);
   } else {
     const arn = agent === 'langgraph' ? config.langgraphRuntimeArn : config.strandsRuntimeArn;
-    return invokeRuntime(arn, message, config.awsRegion);
+    return invokeRuntime(arn, message, sessionId, config.awsRegion);
   }
 }
 
-async function invokeLocal(url: string, message: string): Promise<string> {
+async function invokeLocal(url: string, message: string, sessionId: string): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
 
   try {
     const res = await fetch(`${url}/invocations`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
+      },
       body: JSON.stringify({ input: { message } }),
       signal: controller.signal,
     });
@@ -60,10 +64,16 @@ async function invokeLocal(url: string, message: string): Promise<string> {
   }
 }
 
-async function invokeRuntime(arn: string, message: string, region: string): Promise<string> {
+async function invokeRuntime(
+  arn: string,
+  message: string,
+  sessionId: string,
+  region: string,
+): Promise<string> {
   // AgentCore Runtime is invoked via a SigV4-signed HTTP POST to:
   // POST /runtimes/{agentRuntimeArn}/invocations
-  // We use the AWS SDK's generic HTTP signing.
+  // The session id header is passed through so AgentCore stamps every
+  // OTel span with `session.id`.
   const { SignatureV4 } = await import('@smithy/signature-v4');
   const { Sha256 } = await import('@aws-crypto/sha256-js');
   const { defaultProvider } = await import('@aws-sdk/credential-provider-node');
@@ -82,6 +92,7 @@ async function invokeRuntime(arn: string, message: string, region: string): Prom
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
       host: hostname,
     },
     body: payload,
