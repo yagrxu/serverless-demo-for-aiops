@@ -49,6 +49,11 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'device_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts', type: dynamodb.AttributeType.STRING },
+      // Phase 4 (Req 6.11) — top-partition + throttle visibility for the
+      // hot-partition bug scenario. AccessedAndThrottledKeys captures
+      // both heaviest readers/writers and the keys that experienced
+      // throttling. Idempotent on redeploy.
+      contributorInsightsEnabled: true,
     });
 
     this.feedingEvents = new dynamodb.Table(this, 'FeedingEvents', {
@@ -61,6 +66,9 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts', type: dynamodb.AttributeType.STRING },
+      // Phase 4 (Req 6.12) — full-table-scan bug scenario uses this to
+      // surface the partition that's being hit hardest.
+      contributorInsightsEnabled: true,
     });
 
     this.healthAlerts = new dynamodb.Table(this, 'HealthAlerts', {

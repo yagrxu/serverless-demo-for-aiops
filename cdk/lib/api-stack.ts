@@ -30,6 +30,14 @@ export class ApiStack extends cdk.Stack {
   readonly deviceFnArn: string;
   readonly feedingFnArn: string;
   readonly healthFnArn: string;
+  // Function refs and the access log group are exposed so the
+  // Observability_Stack can build dashboards / log query definitions
+  // against them without re-deriving names.
+  readonly catProfileFn: lambda.IFunction;
+  readonly deviceFn: lambda.IFunction;
+  readonly feedingFn: lambda.IFunction;
+  readonly healthFn: lambda.IFunction;
+  readonly accessLogGroup: logs.ILogGroup;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
     super(scope, id, props);
@@ -107,11 +115,16 @@ export class ApiStack extends cdk.Stack {
       applyApplicationSignalsToLambda(fn);
     }
 
-    // Expose Lambda ARNs for GatewayStack
+    // Expose Lambda ARNs for GatewayStack and Lambda refs for
+    // Observability_Stack.
     this.catProfileFnArn = catFn.functionArn;
     this.deviceFnArn = deviceFn.functionArn;
     this.feedingFnArn = feedingFn.functionArn;
     this.healthFnArn = healthFn.functionArn;
+    this.catProfileFn = catFn;
+    this.deviceFn = deviceFn;
+    this.feedingFn = feedingFn;
+    this.healthFn = healthFn;
 
     // --- API Gateway ---
     // JSON access logs to a dedicated log group so Logs Insights queries
@@ -122,6 +135,7 @@ export class ApiStack extends cdk.Stack {
       retention: logs.RetentionDays.ONE_WEEK,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
+    this.accessLogGroup = apiAccessLogs;
 
     const accessLogFormat = JSON.stringify({
       requestId:         '$context.requestId',

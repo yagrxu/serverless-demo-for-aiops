@@ -9,6 +9,7 @@ export interface AppConfig {
 
 export const defaultConfig: AppConfig = {
   projectName: 'aiops-cat-demo',
+  alarmEmail: 'yagrxu@amazon.com',
   uiBundles: [
     { name: 'chatbot', path: '../ui/chatbot/dist' },
     { name: 'device-simulator', path: '../ui/device-simulator/dist' },

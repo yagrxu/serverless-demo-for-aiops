@@ -31,6 +31,11 @@ export interface UiStackProps extends cdk.StackProps {
  * falls back to a tiny placeholder so `cdk synth` still works.
  */
 export class UiStack extends cdk.Stack {
+  // Exposed so the Observability_Stack can build the CloudFront 5xx
+  // alarm (Phase 4) and the Origin Request Policy attachment (Phase 5)
+  // against the same distribution this stack created.
+  public readonly distribution: cloudfront.Distribution;
+
   constructor(scope: Construct, id: string, props: UiStackProps) {
     super(scope, id, props);
 
@@ -97,6 +102,10 @@ export class UiStack extends cdk.Stack {
         ],
       });
     }
+
+    // Expose the constructed distribution for cross-stack consumers
+    // (Observability_Stack alarms + Phase 5 Origin Request Policy).
+    this.distribution = distribution;
 
     // Deploy each bundle under its own prefix. Generate a placeholder
     // if the bundle directory doesn't exist yet so synth won't explode.

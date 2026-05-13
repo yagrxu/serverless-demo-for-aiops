@@ -19,10 +19,11 @@
 ## Stack Deletion Order
 
 Stacks have dependencies. Delete in this order:
-1. `aiops-cat-demo-fargate` (or `aiops-cat-demo-apprunner`)
-2. `aiops-cat-demo-agents`
-3. `aiops-cat-demo-gateway`
-4. `aiops-cat-demo-ui`
-5. `aiops-cat-demo-api`
-6. `aiops-cat-demo-ecr`
-7. `aiops-cat-demo-data` (last — other stacks reference its tables)
+1. `aiops-cat-demo-observability` (consumes refs from api, data, ui — must go first)
+2. `aiops-cat-demo-fargate` (or `aiops-cat-demo-apprunner`)
+3. `aiops-cat-demo-agents`
+4. `aiops-cat-demo-gateway`
+5. `aiops-cat-demo-ui`
+6. `aiops-cat-demo-api`
+7. `aiops-cat-demo-ecr`
+8. `aiops-cat-demo-data` (last — other stacks reference its tables)
