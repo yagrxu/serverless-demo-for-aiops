@@ -89,6 +89,14 @@ else:
         from opentelemetry.instrumentation.langchain import LangChainInstrumentor
         LangChainInstrumentor().instrument()
     except ImportError:
-        # opentelemetry-instrumentation-langchain not installed locally.
-        # Tracing still works for non-LangChain code paths.
-        pass
+        # opentelemetry-instrumentation-langchain not installed.
+        # Fall back to openinference — the old package we used before the
+        # ADOT migration. One or the other is always present in a working
+        # install.
+        try:
+            from openinference.instrumentation.langchain import LangChainInstrumentor as OpenInferenceLangChain
+            OpenInferenceLangChain().instrument()
+        except ImportError:
+            # Neither instrumentor available; tracing still works for
+            # non-LangChain code paths.
+            pass
