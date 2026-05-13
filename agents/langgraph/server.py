@@ -1,18 +1,22 @@
 """LangGraph ReAct agent for the cat-care demo.
 
-Uses create_react_agent with ChatBedrockConverse and MCP client tools loaded
-dynamically from the MCP Server. The agent is built once at module level
-and reused across requests. Each invocation creates a fresh message list
-(stateless per request).
+Uses ``create_react_agent`` with ``ChatBedrockConverse`` and MCP client
+tools loaded dynamically from the MCP Server. The agent and its MCP tools
+are built **inside the request handler** so the MCP client / httpx
+transport opens its session within the request's OpenTelemetry context.
+This keeps the Gateway POST under the runtime's root trace.
 
-OTel tracing is provided by `opentelemetry-instrument` which wraps the
+Pattern mirrors the AWS-official sample at
+sample-smart-home-assistant-agent-on-agentcore/agent/agent.py.
+
+OTel tracing is provided by ``opentelemetry-instrument`` which wraps the
 process via the Dockerfile CMD. No manual TracerProvider setup here.
 """
 
 import tracing_extras  # noqa: F401 — attaches CodeMetadataSpanProcessor, no-op without OTel
 
-import asyncio
 import os
+import traceback
 
 import boto3
 from botocore.credentials import Credentials
@@ -31,7 +35,6 @@ from streamable_http_sigv4 import SigV4HTTPXAuth
 
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
-#MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-sonnet-4-6")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 SYSTEM_PROMPT = (
@@ -46,25 +49,19 @@ SYSTEM_PROMPT = (
     "If a cat_id is already provided in the context, you can skip the lookup and use it directly."
 )
 
-# ---------------------------------------------------------------------------
-# MCP client — loads tools from MCP Server (local) or AgentCore Gateway (prod)
-#
-# When MCP_SERVER_URL points to an AgentCore Gateway, we pass SigV4 auth
-# to the MultiServerMCPClient. Otherwise plain Streamable HTTP for local.
-# Connection is deferred to the FastAPI lifespan to avoid calling
-# asyncio.run() inside an already-running event loop (uvicorn).
-# ---------------------------------------------------------------------------
-
-from contextlib import asynccontextmanager
-
-agent = None
+# Build the LLM once — it's stateless and safe to share across requests.
+_llm = ChatBedrockConverse(model=MODEL_ID, region_name=AWS_REGION)
 
 
 def _build_mcp_connection_config() -> dict:
-    """Build MCP connection config with appropriate auth for the target URL."""
+    """Build MCP connection config with appropriate auth for the target URL.
+
+    Called per-request so SigV4 credentials are refreshed and the auth
+    handler is created inside the request's OTel context.
+    """
     config: dict = {"url": MCP_SERVER_URL, "transport": "streamable_http"}
     if "gateway.bedrock-agentcore" in MCP_SERVER_URL:
-        # Production: AgentCore Gateway — add SigV4 auth
+        # Production: AgentCore Gateway requires SigV4
         session = boto3.Session()
         creds = session.get_credentials().get_frozen_credentials()
         config["auth"] = SigV4HTTPXAuth(
@@ -79,22 +76,23 @@ def _build_mcp_connection_config() -> dict:
     return config
 
 
-@asynccontextmanager
-async def lifespan(application: FastAPI):
-    global agent
-    conn_config = _build_mcp_connection_config()
-    client = MultiServerMCPClient({"cat-care": conn_config})
+async def _build_agent_with_tools():
+    """Build a fresh MCP client + tools + ReAct agent inside the request.
+
+    ``langchain-mcp-adapters`` opens a new MCP session for every tool call
+    using the closure captured at ``get_tools`` time, so building per-request
+    keeps every Gateway POST under the active trace.
+    """
+    client = MultiServerMCPClient({"cat-care": _build_mcp_connection_config()})
     tools = await client.get_tools()
-    llm = ChatBedrockConverse(model=MODEL_ID, region_name=AWS_REGION)
-    agent = create_react_agent(model=llm, tools=tools, prompt=SYSTEM_PROMPT)
-    yield
+    return create_react_agent(model=_llm, tools=tools, prompt=SYSTEM_PROMPT)
 
 
 # ---------------------------------------------------------------------------
 # FastAPI application
 # ---------------------------------------------------------------------------
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -130,13 +128,13 @@ async def invocations(payload: Invocation):
         user_content = f"[Context: current cat_id is '{cat_id}']\n{message}"
 
     try:
+        agent = await _build_agent_with_tools()
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": user_content}]},
         )
         final_message = result["messages"][-1]
         return {"agent": "langgraph", "response": final_message.content}
-    except Exception as exc:
-        import traceback
+    except Exception:
         traceback.print_exc()
         return {
             "agent": "langgraph",

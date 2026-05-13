@@ -1,9 +1,13 @@
 """Strands agent for the cat-care demo.
 
 Uses the Strands Agent class with BedrockModel and MCP client tools loaded
-dynamically from the MCP Server. The agent is built once at module level and
-reused across requests. Each invocation creates a fresh conversation (stateless
-per request).
+dynamically from the MCP Server. The MCP client and Agent are constructed
+**per request** so that the OTel context active during the request handler
+is propagated into the MCPClient background thread (Strands uses
+`contextvars.copy_context()` at `start()` time — see Strands SDK
+mcp_client.py). Constructing the client at module import made the
+background thread's context snapshot useless, which produced an orphan
+trace for every gateway call.
 
 OTel tracing is provided by `opentelemetry-instrument` which wraps the
 process via the Dockerfile CMD. No manual TracerProvider setup here.
@@ -44,16 +48,23 @@ SYSTEM_PROMPT = (
 )
 
 # ---------------------------------------------------------------------------
-# MCP client — connects to MCP Server (local) or AgentCore Gateway (prod)
-#
-# When MCP_SERVER_URL points to an AgentCore Gateway (*.gateway.bedrock-
-# agentcore.*), we use SigV4-signed Streamable HTTP. Otherwise plain
-# Streamable HTTP for local development.
+# Reusable model — model construction is cheap and stateless, so it stays
+# at module level. The MCP client and Agent are built per request.
 # ---------------------------------------------------------------------------
+
+_model = BedrockModel(
+    model_id=MODEL_ID,
+    region_name="us-east-1",
+)
 
 
 def _create_mcp_client() -> MCPClient:
-    """Create MCP client with appropriate transport/auth for the target URL."""
+    """Create MCP client with appropriate transport/auth for the target URL.
+
+    When MCP_SERVER_URL points to an AgentCore Gateway (*.gateway.bedrock-
+    agentcore.*), we use SigV4-signed Streamable HTTP. Otherwise plain
+    Streamable HTTP for local development.
+    """
     if "gateway.bedrock-agentcore" in MCP_SERVER_URL:
         # Production: AgentCore Gateway requires SigV4
         session = boto3.Session()
@@ -76,23 +87,6 @@ def _create_mcp_client() -> MCPClient:
         # Local: plain Streamable HTTP (no auth)
         return MCPClient(lambda: streamablehttp_client(MCP_SERVER_URL))
 
-
-mcp_client = _create_mcp_client()
-
-# ---------------------------------------------------------------------------
-# Build the Strands agent once at module level
-# ---------------------------------------------------------------------------
-
-_model = BedrockModel(
-    model_id=MODEL_ID,
-    region_name="us-east-1",
-)
-
-strands_agent = Agent(
-    model=_model,
-    system_prompt=SYSTEM_PROMPT,
-    tools=[mcp_client],
-)
 
 # ---------------------------------------------------------------------------
 # FastAPI application
@@ -119,6 +113,23 @@ def ping():
     return {"status": "ok"}
 
 
+def _run_agent(user_content: str) -> str:
+    """Build a fresh MCPClient + Agent inside the calling thread, run one
+    invocation, then tear down. Done synchronously so MCPClient.start()
+    captures the OTel context active in this thread (the request task
+    that the runtime's server span has activated).
+    """
+    mcp_client = _create_mcp_client()
+    with mcp_client:
+        tools = mcp_client.list_tools_sync()
+        agent = Agent(
+            model=_model,
+            system_prompt=SYSTEM_PROMPT,
+            tools=tools,
+        )
+        return str(agent(user_content))
+
+
 @app.post("/invocations")
 async def invocations(payload: Invocation):
     # Support both Omni format (prompt) and original format (input.message)
@@ -134,9 +145,14 @@ async def invocations(payload: Invocation):
         user_content = f"[Context: current cat_id is '{cat_id}']\n{message}"
 
     try:
-        result = await asyncio.to_thread(strands_agent, user_content)
-        return {"agent": "strands", "response": str(result)}
+        # asyncio.to_thread copies contextvars (PEP 567) including the
+        # OTel context, so MCPClient.start() in the worker thread sees
+        # the runtime's server span as the active parent.
+        result = await asyncio.to_thread(_run_agent, user_content)
+        return {"agent": "strands", "response": result}
     except Exception:
+        import traceback
+        traceback.print_exc()
         return {
             "agent": "strands",
             "response": (
