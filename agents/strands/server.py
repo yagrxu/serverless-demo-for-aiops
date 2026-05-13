@@ -9,6 +9,8 @@ OTel tracing is provided by `opentelemetry-instrument` which wraps the
 process via the Dockerfile CMD. No manual TracerProvider setup here.
 """
 
+import tracing_extras  # noqa: F401 — attaches CodeMetadataSpanProcessor, no-op without OTel
+
 import asyncio
 import os
 
