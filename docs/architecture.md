@@ -349,6 +349,7 @@ X-Ray traces, agent invocation logs, CloudFront access logs).
 | Lambda + API X-Ray       | Active tracing on every Lambda and the API Gateway stage |
 | API Gateway metrics      | CloudWatch, including per-method latency / 4xx / 5xx     |
 | AgentCore runtime logs   | CloudWatch (auto-provisioned by the service)             |
+| AgentCore Gateway traces | X-Ray via CloudWatch Logs delivery (TRACES → XRAY)       |
 | CloudFront access logs   | Off by default — enable per investigation if needed      |
 | DynamoDB metrics         | Standard CloudWatch metrics on each table                |
 
