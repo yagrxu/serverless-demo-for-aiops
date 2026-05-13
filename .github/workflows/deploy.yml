@@ -176,6 +176,12 @@ jobs:
 
       # ===================================================================
       # Phase 1: Non-agent stacks (ECR, Data, API, Gateway, UI)
+      # We do NOT pass `-c skipAgents=true` here. When the flag is true,
+      # app.ts skips constructing AgentStack entirely, which makes the
+      # ECR exports look unused and CDK tries to delete them — breaking
+      # the second and later runs because the live AgentStack in AWS is
+      # still referencing those exports. Instead, construct every stack
+      # at synth time and let `cdk deploy` only deploy the ones we name.
       # ===================================================================
       - name: "Phase 1: Deploy infrastructure stacks"
         if: >-
@@ -183,13 +189,16 @@ jobs:
           env.CHG_CDK == 'true' || env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true'
         working-directory: cdk
         run: |
+          # -c imageTag=${{ github.sha }} so AgentStack synth doesn't
+          # fall back to `:latest` for exports that feed other stacks;
+          # this image tag is also the one Phase 3 will deploy with.
           npx cdk deploy \
             ${PROJECT_NAME}-ecr \
             ${PROJECT_NAME}-data \
             ${PROJECT_NAME}-api \
             ${PROJECT_NAME}-gateway \
             --require-approval never \
-            -c skipAgents=true
+            -c imageTag=${{ github.sha }}
 
       # ===================================================================
       # Phase 2: Build and push Docker images
