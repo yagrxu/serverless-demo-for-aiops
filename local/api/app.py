@@ -50,6 +50,26 @@ app.add_middleware(
 )
 
 
+class _FakeLambdaContext:
+    """Minimal mock of the Lambda context object for local dev."""
+    function_name = "local-dev"
+    function_version = "$LATEST"
+    invoked_function_arn = "arn:aws:lambda:us-east-1:000000000000:function:local-dev"
+    memory_limit_in_mb = 128
+    aws_request_id = "local-request-id"
+    log_group_name = "/aws/lambda/local-dev"
+    log_stream_name = "local"
+    client_context = None
+    identity = None
+
+    @staticmethod
+    def get_remaining_time_in_millis():
+        return 300000
+
+
+_fake_ctx = _FakeLambdaContext()
+
+
 async def _invoke(handler, resource: str, method: str, request: Request, path_params=None):
     body_bytes = await request.body()
     event = {
@@ -61,7 +81,7 @@ async def _invoke(handler, resource: str, method: str, request: Request, path_pa
         "body": body_bytes.decode() if body_bytes else None,
         "isBase64Encoded": False,
     }
-    result = handler(event, None)
+    result = handler(event, _fake_ctx)
     return Response(
         content=result.get("body", ""),
         status_code=result.get("statusCode", 200),
