@@ -248,7 +248,7 @@ jobs:
 
       - name: Install agent dependencies
         run: |
-          pip install pytest pytest-timeout httpx botocore starlette uvicorn fastapi
+          pip install pytest pytest-timeout httpx botocore boto3 starlette uvicorn fastapi
 
       - name: Install remaining agent deps (best-effort)
         continue-on-error: true
