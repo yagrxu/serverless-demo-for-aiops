@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
+import { Aspects } from 'aws-cdk-lib';
+import { AwsSolutionsChecks, NagSuppressions } from 'cdk-nag';
 import { DataStack } from '../lib/data-stack';
 import { ApiStack } from '../lib/api-stack';
 import { GatewayStack } from '../lib/gateway-stack';
@@ -123,3 +125,38 @@ new ObservabilityStack(app, `${cfg.projectName}-observability`, {
   apiAccessLogGroup: api.accessLogGroup,
   cloudfrontDistribution: ui.distribution,
 });
+
+// --- cdk-nag: Infrastructure Static Checks ---
+// Apply AWS Solutions rule pack when nagEnabled context flag is set.
+// Usage: npx cdk synth --no-lookups -c nagEnabled=true
+const nagEnabled = app.node.tryGetContext('nagEnabled') === 'true';
+if (nagEnabled) {
+  Aspects.of(app).add(new AwsSolutionsChecks({ verbose: true }));
+
+  // Suppressions for known findings. Each entry requires:
+  //   - rule ID (e.g., AwsSolutions-XXX)
+  //   - resource path or construct
+  //   - justification (≥20 characters)
+  // Add suppressions as findings are discovered during the first nag run.
+  NagSuppressions.addStackSuppressions(
+    cdk.Stack.of(ecr),
+    [
+      {
+        id: 'AwsSolutions-ECR1',
+        reason: 'ECR image scanning is not required for this demo application',
+      },
+    ],
+    true,
+  );
+
+  NagSuppressions.addStackSuppressions(
+    cdk.Stack.of(data),
+    [
+      {
+        id: 'AwsSolutions-DDB3',
+        reason: 'Point-in-time recovery is not required for this demo application',
+      },
+    ],
+    true,
+  );
+}

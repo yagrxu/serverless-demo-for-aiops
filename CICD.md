@@ -66,6 +66,65 @@ Phase 1 is *not* run with `-c skipAgents=true`. The flag tells `app.ts` to skip 
 
 Without the `stack_health` job, the change-detection step would skip Phase 1 entirely on commits that didn't touch watched paths — even when the live stack was sitting in `UPDATE_ROLLBACK_COMPLETE` from a prior failure. Result: no recovery, the broken state persisted, and the workflow showed green. The pre-flight check forces a full redeploy whenever any project stack is unhealthy, so a follow-up commit (or a manual `workflow_dispatch` re-run) reliably recovers a broken environment.
 
+## PR test pipeline
+
+[`.github/workflows/pr-tests.yml`](.github/workflows/pr-tests.yml) runs on every pull request targeting `main` or `release`. It validates code quality and correctness **offline** — no AWS credentials, no deploys, no shared jobs with the deploy workflow.
+
+### What it checks
+
+| Job | Runs when | What it validates |
+|-----|-----------|-------------------|
+| `cdk-synth` | Always | TypeScript compiles, `cdk synth --no-lookups` succeeds |
+| `cdk-tests` | Always | Jest assertion tests in `cdk/test/` pass |
+| `infra-static-check` | Always | cdk-nag (AWS Solutions pack) reports no unsuppressed errors |
+| `lint-format` | Always | ESLint (CDK + UI) and Ruff (Python) pass |
+| `lambda-tests` | `cdk/lambda/**` changed | pytest suite for Lambda handlers passes |
+| `agent-tests` | `agents/**` changed | pytest suite for agent modules passes |
+| `ui-tests` | `ui/**` changed | Vitest/Jest suites for UI apps pass |
+| `aggregate-status` | Always | Collects all job outcomes into one check |
+
+### Aggregate status check
+
+The workflow emits a single required check:
+
+```
+PR Tests / aggregate-status
+```
+
+This is the **only check name** you need to add to branch protection. It reports success when all jobs pass or are skipped (path-filtered), and failure when any job fails or is cancelled.
+
+### Configuring branch protection
+
+Add `PR Tests / aggregate-status` as a required status check for both `main` and `release`:
+
+1. Go to **Settings → Branches → Branch protection rules**.
+2. Edit (or create) the rule for `main`:
+   - Enable **Require status checks to pass before merging**.
+   - Search for `PR Tests / aggregate-status` and add it to the required list.
+   - (Recommended) Enable **Require branches to be up to date before merging** so the check runs against the latest base.
+3. Repeat for the `release` branch rule.
+
+Once configured, PRs cannot merge until the aggregate check reports success.
+
+### Concurrency
+
+Pushes to the same PR cancel in-progress runs automatically:
+
+```yaml
+concurrency:
+  group: pr-tests-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+```
+
+### Relationship to the deploy workflow
+
+The PR test pipeline and the deploy pipeline are completely independent:
+
+- **PR tests** (`pr-tests.yml`) — triggered by `pull_request` events, no AWS credentials, validates code offline.
+- **Deploy** (`deploy.yml`) — triggered by `push` to `test` or `release`, assumes AWS role via OIDC, runs `cdk deploy`.
+
+They share no jobs, no composite actions, and no secrets.
+
 ## One-time setup (per account)
 
 Run the setup script once with each AWS profile:
@@ -149,7 +208,7 @@ git push --force-with-lease origin main:test
 ## Rules for `main`
 
 - Every change arrives through a PR. No direct pushes.
-- Required checks before merge: `cdk synth` (ideally run on PRs as a separate workflow — not yet wired up here).
+- Required checks before merge: `PR Tests / aggregate-status` (runs on every PR targeting `main` or `release`).
 - Prefer squash-merge so each feature becomes one commit on `main`.
 - `main` itself never triggers a deploy — the only way to ship is to update `test` or `release`.
 

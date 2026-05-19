@@ -57,9 +57,54 @@ CLAUDE.md
 ## Prerequisites
 
 - Node.js 20+
-- Python 3.12 (for editing Lambda handlers and agents)
+- **Python 3.12** (required — some dependencies like `aws-sdk-bedrock-runtime` only support >= 3.12)
 - Docker (for `cdk deploy` — builds the two agent images)
 - AWS CLI with the `cloudops-demo` profile configured
+
+### Python 3.12 setup with pyenv
+
+We use [pyenv](https://github.com/pyenv/pyenv) to manage Python versions. If you don't have it yet:
+
+```bash
+# macOS (Homebrew)
+brew install pyenv
+
+# Add to your shell profile (~/.zshrc or ~/.bashrc)
+echo 'export PYENV_ROOT="$HOME/.pyenv"' >> ~/.zshrc
+echo '[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"' >> ~/.zshrc
+echo 'eval "$(pyenv init -)"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+Install and activate Python 3.12:
+
+```bash
+pyenv install 3.12
+pyenv local 3.12    # sets .python-version in the repo root
+python --version    # should show Python 3.12.x
+```
+
+### Virtual environment setup
+
+Each Python component (`agents/langgraph`, `agents/strands`, `cdk/lambda/*`) maintains its own venv. Example for the Strands agent:
+
+```bash
+cd agents/strands
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+For Lambda handlers (used when running tests locally):
+
+```bash
+cd cdk/lambda/cat-profile
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt   # if present, or install boto3 manually
+```
+
+> **CI note:** The GitHub Actions PR test workflow uses Python 3.12 exclusively. Python 3.10/3.11 are not supported due to dependency constraints (`aws-sdk-bedrock-runtime >= 0.6.0` requires Python 3.12+).
 
 ## Local development
 
