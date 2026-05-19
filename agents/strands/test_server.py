@@ -9,8 +9,6 @@ Validates:
 import sys
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers: mock the problematic MCP imports that trigger pydantic errors

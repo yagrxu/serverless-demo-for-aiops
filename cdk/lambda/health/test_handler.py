@@ -5,10 +5,8 @@ Validates:
 - Handler returns 2xx for a valid API Gateway proxy event (GET /health/{cat_id})
 - Handler returns 2xx for alerts route (GET /health/{cat_id}/alerts)
 """
-import json
 import os
 import sys
-import importlib
 from unittest.mock import MagicMock, patch
 
 import pytest
