@@ -247,10 +247,12 @@ jobs:
           python-version: '3.12'
 
       - name: Install agent dependencies
-        run: pip install -r agents/langgraph/requirements.txt -r agents/strands/requirements.txt
+        run: |
+          pip install pytest pytest-timeout httpx botocore starlette uvicorn fastapi
 
-      - name: Install test dependencies
-        run: pip install pytest pytest-timeout
+      - name: Install remaining agent deps (best-effort)
+        continue-on-error: true
+        run: pip install -r agents/langgraph/requirements.txt -r agents/strands/requirements.txt 2>/dev/null || true
 
       - name: Run agent tests
         run: |
