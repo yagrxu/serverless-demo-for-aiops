@@ -216,6 +216,73 @@ tool calls directly into Lambda invocations. Locally, the MCP Server
 (`mcp-server/`) mirrors the same pattern. Both agents use Claude Haiku
 4.5 by default. Override with `MODEL_ID`.
 
+## How to investigate a bug injected on a feature/* branch
+
+Bugs are injected directly in Lambda or agent source code on `feature/*`
+branches and deployed to the test account via the `test` pointer. Once
+traffic hits the injected code, CloudWatch surfaces the signal
+automatically — no log grepping required.
+
+### CloudWatch Application Signals
+
+Application Signals is enabled account-wide via `CfnDiscovery` in the
+Observability stack. It covers:
+
+- **Lambda + API Gateway** — the ADOT layer on each Lambda and
+  `tracingEnabled` on the API stage feed the Service Map. Every handler
+  appears with downstream DynamoDB edges after one request.
+- **AgentCore Runtimes** — both LangGraph and Strands containers run
+  under `opentelemetry-instrument`, so their spans flow into the same
+  Service Map and Transaction Search index.
+
+Open the Service Map:
+`https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#application-signals:services`
+
+### CloudWatch Dashboards
+
+Three persona-scoped dashboards are deployed by the Observability stack:
+
+| Dashboard | Focus | Console link |
+|-----------|-------|--------------|
+| `aiops-cat-demo-sre` | Latency, errors, throttles, DDB capacity, alarm status | [SRE Dashboard](https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/aiops-cat-demo-sre) |
+| `aiops-cat-demo-genai` | Per-runtime invocation latency, token usage, tool-call duration, Gateway errors | [GenAI Dashboard](https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/aiops-cat-demo-genai) |
+| `aiops-cat-demo-business` | Domain KPIs — feedings, device commands, health alerts | [Business Dashboard](https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#dashboards/dashboard/aiops-cat-demo-business) |
+
+### Alarms and anomaly detectors
+
+23 alarms fire to a single SNS topic (`aiops-cat-demo-alarms`). Key ones:
+
+- Lambda Duration p99 anomaly (×4) and Errors > 0 (×4)
+- API Gateway 5xx anomaly
+- DynamoDB ThrottledRequests > 0 per table (×7)
+- `DeviceWriteSuccess` below anomaly band (catches silent DDB failures)
+- Per-runtime token anomaly (catches infinite loops)
+- Bedrock throttle, Gateway target errors, RUM JS error rate, CloudFront 5xx
+
+All alarms appear in the SRE dashboard's top-row `AlarmStatusWidget`.
+
+### Contributor Insights
+
+Enabled on `DeviceTelemetry` and `HealthMetrics` tables. Shows the
+hottest partition keys when throttles spike — useful for the hot-partition
+and full-table-scan bug scenarios.
+
+### Investigation workflow
+
+1. **Start from the alarm** — check the SRE dashboard alarm row or the
+   SNS email notification.
+2. **Drill into Transaction Search** — find the trace that triggered the
+   alarm. Transaction Search indexes spans into `aws/spans/default`:
+   `https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#transactionsearch:`
+3. **For agent-layer issues** — open the GenAI Observability console to
+   see per-session traces, token usage, and tool-call sequences:
+   `https://console.aws.amazon.com/cloudwatch/home?region=us-east-1#gen-ai-observability`
+4. **Use saved Logs Insights queries** — four pre-built queries are
+   deployed: `A-all-errors-for-trace`, `B-slowest-tool-calls`,
+   `C-ddb-throttles-by-table`, `D-injected-bug-marker`.
+5. **Check Contributor Insights** — if DDB throttles fired, the CI
+   widget on the SRE dashboard shows which partition key is hot.
+
 ## Previous design
 
 The earlier Items-and-S3 demo lives under `tmp/cdk/` plus `tmp/scenarios/`,
