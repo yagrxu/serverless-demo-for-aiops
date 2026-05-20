@@ -13,6 +13,7 @@
     "@aws-sdk/credential-provider-node": "^3.600.0",
     "@smithy/protocol-http": "^4.0.0",
     "@smithy/signature-v4": "^4.0.0",
+    "aws-rum-web": "^1.18.0",
     "next": "^14.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
