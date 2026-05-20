@@ -53,4 +53,5 @@ export AWS_PROFILE=<your-bedrock-profile>
 | 8083 | MCP Server | Host |
 | 8081 | LangGraph agent | Host |
 | 8082 | Strands agent | Host |
+| 8084 | Voice agent (Nova Sonic) | Host |
 | 3000 | All UIs (Next.js) | Host |

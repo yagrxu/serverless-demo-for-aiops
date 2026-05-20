@@ -101,6 +101,7 @@ const ui = new UiStack(app, `${cfg.projectName}-ui`, {
   bundles: cfg.uiBundles,
   apiUrl: api.api.url,
   appRunnerServiceUrl: chatbotAlbDnsName,
+  projectName: cfg.projectName,
 });
 
 new ObservabilityStack(app, `${cfg.projectName}-observability`, {

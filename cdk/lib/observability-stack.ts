@@ -841,5 +841,36 @@ export class ObservabilityStack extends cdk.Stack {
     // the test account without opening every alarm.
     new cdk.CfnOutput(this, 'AlarmTopicArn', { value: alarmTopic.topicArn });
     new cdk.CfnOutput(this, 'AlarmCount', { value: this.alarms.length.toString() });
+
+    // ---------------------------------------------------------------
+    // Phase 6 — CloudWatch Investigations group (Req 8.1, 8.2)
+    // ---------------------------------------------------------------
+    // Gated by CDK context flag: -c investigationsGa=true
+    // While Investigations is in preview, only ephemeral investigations
+    // are available. Once GA in us-east-1, flip the flag to create a
+    // persistent investigation group with 90-day retention.
+    const investigationsGa = this.node.tryGetContext('investigationsGa') === 'true';
+
+    if (investigationsGa) {
+      // Note: AWS::CloudWatch::InvestigationGroup is a newer CloudFormation
+      // resource type. Using CfnResource as a forward-compatible placeholder
+      // that will work once the resource type is registered in the region.
+      new cdk.CfnResource(this, 'InvestigationGroup', {
+        type: 'AWS::CloudWatch::InvestigationGroup',
+        properties: {
+          Identifier: `${props.projectName}-investigations`,
+          EncryptionConfiguration: { Type: 'AWS_OWNED_KEY' },
+          RetentionInDays: 90,
+        },
+      });
+
+      new cdk.CfnOutput(this, 'InvestigationsMode', {
+        value: `persistent (GA); group: ${props.projectName}-investigations`,
+      });
+    } else {
+      new cdk.CfnOutput(this, 'InvestigationsMode', {
+        value: 'ephemeral-only (preview); persistent group not created. See CICD.md.',
+      });
+    }
   }
 }

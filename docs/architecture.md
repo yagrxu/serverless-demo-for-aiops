@@ -368,7 +368,221 @@ GitHub Actions deploys that exact commit to the test account, and
 investigation happens against the live stack (CloudWatch Logs,
 X-Ray traces, agent invocation logs, CloudFront access logs).
 
-## Observability defaults
+## Observability layer
+
+The observability layer makes every injected bug surface as a CloudWatch
+signal without manual log grepping. It spans four concerns:
+auto-instrumentation on compute, header propagation for trace stitching,
+a dedicated `Observability_Stack` for account-scoped resources, and
+business signals on top of the golden metrics.
+
+### Observability Stack (`aiops-cat-demo-observability`)
+
+A dedicated CDK stack (`cdk/lib/observability-stack.ts`) owns all
+account-scoped observability resources. It depends on `ApiStack`,
+`DataStack`, and `UiStack` so it can reference Lambda functions, DynamoDB
+tables, and the CloudFront distribution.
+
+What it creates:
+
+| Resource type | Count | Purpose |
+|---------------|-------|---------|
+| `CfnDiscovery` (Application Signals) | 1 | Enables the Service Map for the account+region |
+| CloudWatch Dashboards | 3 | SRE, GenAI, Business persona views |
+| `QueryDefinition` (Logs Insights) | 4 | Saved queries for trace errors, slow tools, DDB throttles, injected markers |
+| SNS Topic + email subscription | 1 | Alarm delivery to `config.alarmEmail` |
+| CloudWatch Alarms | 23 | Anomaly detectors + static thresholds (see below) |
+| `CfnInvestigationGroup` (opt-in) | 0-1 | Persistent investigation group when `-c investigationsGa=true` |
+
+### Application Signals — auto-instrumentation
+
+Every compute layer is auto-instrumented. No hand-rolled tracing code.
+
+**Lambda (ADOT layer + Powertools):**
+
+- Each Lambda gets the region-matched AWS Distro for OpenTelemetry Python
+  layer with `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument`.
+- The managed policy `CloudWatchLambdaApplicationSignalsExecutionRolePolicy`
+  is attached to every Lambda execution role.
+- Handlers use Powertools `Logger` (auto-stamps `xray_trace_id`,
+  `function_request_id`, `cold_start`) and `Metrics` (namespace `CatDemo`,
+  dimensioned by `service`). No Powertools `tracer` extra — ADOT owns tracing.
+- Per-service EMF metrics: `CatProfilesRead/Written`, `DevicesCommanded/DeviceWriteSuccess`,
+  `FeedingsRead/Created`, `HealthMetricsRead/HealthAlertsRead`.
+
+**API Gateway (access logs):**
+
+- JSON access logs to `/aws/apigateway/cat-demo-access` (7-day retention)
+  with fields: `requestId`, `extendedRequestId`, `status`, `resourcePath`,
+  `httpMethod`, `responseLatency`, `integrationStatus`, `integrationLatency`,
+  `requestTime`, `sourceIp`, `userAgent`, `xrayTraceId`.
+- `tracingEnabled: true` and `metricsEnabled: true` on the stage.
+
+**AgentCore Runtimes (`opentelemetry-instrument`):**
+
+- Both LangGraph and Strands Dockerfiles use
+  `CMD ["opentelemetry-instrument", "uvicorn", "server:app", ...]` as the
+  entrypoint. ADOT auto-instrument owns the `TracerProvider`.
+- Dependencies: `aws-opentelemetry-distro>=0.10.0` on both;
+  `opentelemetry-instrumentation-langchain` on LangGraph;
+  `strands-agents[otel]` on Strands.
+- A `tracing_extras.py` module attaches an auxiliary `CodeMetadataSpanProcessor`
+  to the existing `TracerProvider` (stamps `code.filepath`, `code.lineno`,
+  `code.function` on spans) without creating a new provider.
+- The AgentCore execution role grants `cloudwatch:PutMetricData`,
+  `logs:DescribeLogStreams`, `logs:DescribeLogGroups` for metric emission.
+
+### CloudWatch Dashboards
+
+Three persona-scoped dashboards:
+
+**SRE Dashboard (`aiops-cat-demo-sre`):**
+- Alarm status widget (all 23 alarms)
+- API Gateway 4xx/5xx per resource path
+- Per-Lambda Duration (p50, p90, p99), Errors, Throttles
+- Per-table DynamoDB ConsumedRead/WriteCapacityUnits, ThrottledRequests
+- Contributor Insights widgets for DeviceTelemetry and HealthMetrics top partitions
+
+**GenAI Dashboard (`aiops-cat-demo-genai`):**
+- Markdown link to the CloudWatch GenAI Observability console
+- Per-runtime InvocationLatency (p50, p90, p99) from `bedrock-agentcore` namespace
+- Per-runtime token usage over time (InputTokens, OutputTokens)
+- LangGraph vs Strands latency p95 comparison (single chart, two series)
+- LogQueryWidget: slowest 10 tool calls in the last hour
+- AgentCore Gateway target invocation error count by target
+
+**Business Dashboard (`aiops-cat-demo-business`):**
+- `FeedingsCreated` rate per minute
+- `HealthAlertsRead` count per hour
+- `DevicesCommanded` count per minute
+- Per-service breakdown of each KPI
+
+### Alarms
+
+All 23 alarms publish to the SNS topic `aiops-cat-demo-alarms`:
+
+| # | Count | Alarm | Source |
+|---|-------|-------|--------|
+| 6.1 | 4 | Lambda Duration p99 anomaly band | per `FunctionName` |
+| 6.2 | 4 | Lambda Errors > 0 | per `FunctionName` |
+| 6.3 | 1 | API GW 5XXError anomaly band | aggregate |
+| 6.4 | 7 | DDB ThrottledRequests > 0 | per `TableName` |
+| 6.5 | 1 | Bedrock ThrottlingException > 0 | account-wide |
+| 6.6 | 1 | `DeviceWriteSuccess` BELOW anomaly band | catches silent DDB swallows |
+| 6.7 | 2 | Per-runtime token anomaly band | catches agent loops |
+| 6.8 | 1 | Gateway target invocation errors > 0 | misconfigured targets |
+| 6.9 | 1 | RUM JS error rate anomaly band | browser-side errors |
+| 6.10 | 1 | CloudFront 5xxErrorRate > 1% | aggregate distribution |
+
+Anomaly-band alarms need ~14 days of history to learn a useful boundary;
+expect them to sit in `INSUFFICIENT_DATA` until then. Static threshold
+alarms fire immediately.
+
+### Contributor Insights
+
+Enabled on two DynamoDB tables for hot-partition and full-scan detection:
+
+- **DeviceTelemetry** — surfaces the top accessed/throttled partition keys
+  during a hot-partition bug scenario.
+- **HealthMetrics** — surfaces the top accessed partition keys during a
+  full-table-scan regression.
+
+### SNS topic for alarm notifications
+
+A single topic (`aiops-cat-demo-alarms`) with one email subscription
+(`config.alarmEmail`). The topic policy restricts `sns:Publish` to
+`cloudwatch.amazonaws.com` with an `aws:SourceArn` condition scoped to
+alarms in the deployment account.
+
+### Trace flow — REST API path
+
+How traces flow from the browser through CloudFront, API Gateway, Lambda,
+to DynamoDB (with X-Ray segments at each hop):
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant CloudFront
+    participant APIGateway as API Gateway
+    participant Lambda
+    participant DynamoDB
+
+    Browser->>CloudFront: XHR/fetch + traceparent + X-Amzn-Trace-Id
+    Note over CloudFront: Origin Request Policy<br/>forwards correlation headers
+    CloudFront->>APIGateway: traceparent + X-Amzn-Trace-Id
+    Note over APIGateway: X-Ray ACTIVE tracing<br/>JSON access log (xrayTraceId)
+    APIGateway->>Lambda: invoke (X-Ray segment)
+    Note over Lambda: ADOT layer creates subsegment<br/>Powertools logs xray_trace_id
+    Lambda->>DynamoDB: boto3 (ADOT-instrumented)<br/>X-Ray subsegment per call
+    DynamoDB-->>Lambda: response
+    Lambda-->>APIGateway: response
+    APIGateway-->>CloudFront: response
+    CloudFront-->>Browser: response
+```
+
+Each hop produces an X-Ray segment/subsegment. The `xrayTraceId` field
+in API Gateway access logs joins with the `xray_trace_id` field in
+Lambda structured logs, enabling cross-layer correlation in Logs Insights.
+
+### Trace flow — Agent path
+
+How agent traces flow from the Chatbot BFF through AgentCore to Lambda:
+
+```mermaid
+sequenceDiagram
+    participant Browser as Chatbot UI
+    participant BFF as Chatbot BFF
+    participant Runtime as AgentCore Runtime
+    participant Gateway as AgentCore Gateway
+    participant Lambda
+    participant DynamoDB
+
+    Browser->>BFF: message + Session_Id (from localStorage)
+    Note over BFF: Forwards Session_Id header<br/>on InvokeAgentRuntime
+    BFF->>Runtime: InvokeAgentRuntime<br/>+ X-Amzn-Bedrock-AgentCore-Runtime-Session-Id
+    Note over Runtime: opentelemetry-instrument<br/>stamps session.id on all spans
+    Runtime->>Gateway: MCP tool call (SigV4)
+    Note over Gateway: Translates MCP to Lambda invoke<br/>X-Ray trace context propagated
+    Gateway->>Lambda: invoke (X-Ray segment)
+    Note over Lambda: Same ADOT + Powertools path<br/>Session_Id does NOT reach Lambda
+    Lambda->>DynamoDB: boto3 (X-Ray subsegment)
+    DynamoDB-->>Lambda: response
+    Lambda-->>Gateway: response
+    Gateway-->>Runtime: MCP response
+    Runtime-->>BFF: agent response
+    BFF-->>Browser: streamed response
+```
+
+Session_Id stays in the agent tier (Runtime + Gateway). Lambda sees only
+the X-Ray trace context. Investigators start from the GenAI Observability
+session view, then drill into downstream Lambda/DynamoDB spans via the
+shared X-Ray trace ID.
+
+### Stack dependency diagram
+
+```mermaid
+flowchart LR
+    DataStack --> ApiStack
+    ApiStack --> ObservabilityStack
+    DataStack --> ObservabilityStack
+    UiStack --> ObservabilityStack
+```
+
+`ObservabilityStack` is created last so it can reference Lambda functions,
+DynamoDB tables, and the CloudFront distribution from the other stacks.
+
+### Saved Logs Insights queries
+
+Four `QueryDefinition` resources under the prefix `aiops-cat-demo/`:
+
+| Query | Target log groups | Purpose |
+|-------|-------------------|---------|
+| `A-all-errors-for-trace` | All 4 Lambda log groups | Filter by `xray_trace_id` to find all errors for a specific trace |
+| `B-slowest-tool-calls` | Both AgentCore Runtime log groups | Rank tool calls by duration in the last hour |
+| `C-ddb-throttles-by-table` | All 4 Lambda log groups | Group DynamoDB throttle exceptions by table name |
+| `D-injected-bug-marker` | All Lambda + Runtime log groups | Find any log line containing `INJECTED` |
+
+### Signal inventory (quick reference)
 
 | Signal                       | Where                                                                |
 |------------------------------|----------------------------------------------------------------------|
@@ -386,43 +600,6 @@ X-Ray traces, agent invocation logs, CloudFront access logs).
 | DynamoDB metrics             | Standard CloudWatch metrics on each table.                           |
 | Persona dashboards           | `ObservabilityStack` provisions three CloudWatch dashboards: `aiops-cat-demo-sre` (API GW 4xx/5xx, per-Lambda Duration/Errors/Throttles, per-table consumed/throttled capacity, plus an `AlarmStatusWidget` populated by Phase 4), `aiops-cat-demo-genai` (per-runtime `bedrock-agentcore` latency + token usage, p95 LangGraph vs Strands, slowest tool calls Logs Insights widget, Gateway target errors), and `aiops-cat-demo-business` (`CatDemo.FeedingsCreated`, `HealthAlertsRead`, `DevicesCommanded` KPIs plus per-service breakdown). |
 | Saved Logs Insights queries  | Four `QueryDefinition`s under the prefix `aiops-cat-demo/`: `A-all-errors-for-trace` (filter by `${trace_id}`), `B-slowest-tool-calls`, `C-ddb-throttles-by-table`, `D-injected-bug-marker`. |
-
-### Phase 4 — alarm topology
-
-The SNS topic `aiops-cat-demo-alarms` receives every alarm action. Its
-access policy allows only `cloudwatch.amazonaws.com` to `sns:Publish`,
-scoped by `aws:SourceArn` to alarms in the same account/region. The
-single email subscriber comes from `config.alarmEmail` (defaults to
-`yagrxu@amazon.com`).
-
-The 23 alarms break down as follows:
-
-| Req | Count | Alarm | Source |
-|-----|-------|-------|--------|
-| 6.1 | 4 | Lambda Duration p99 anomaly band | per `FunctionName` |
-| 6.2 | 4 | Lambda Errors > 0 | per `FunctionName` |
-| 6.3 | 1 | API GW 5XXError anomaly band | aggregate, all paths |
-| 6.4 | 7 | DynamoDB ThrottledRequests > 0 | per `TableName` |
-| 6.5 | 1 | Bedrock ThrottlingException > 0 | account-wide |
-| 6.6 | 1 | `DeviceWriteSuccess` BELOW anomaly band | catches silent DDB swallows on telemetry writes |
-| 6.7 | 2 | Per-runtime InputTokens + OutputTokens anomaly band | catches LangGraph / Strands loops |
-| 6.8 | 1 | Gateway target invocation errors > 0 | catches misconfigured targets |
-| 6.9 | 1 | RUM JS error rate anomaly band | only useful after Phase 5 RUM lands |
-| 6.10 | 1 | CloudFront 5xxErrorRate > 1% over 5 minutes | aggregate distribution |
-
-Anomaly-band alarms need ~14 days of history to learn a useful
-boundary; expect them to sit in `INSUFFICIENT_DATA` until then. Static
-threshold alarms fire immediately. CloudFront, RUM, Gateway, and
-Bedrock alarms also remain in `INSUFFICIENT_DATA` until the
-corresponding traffic exists.
-
-Contributor Insights is enabled on `DeviceTelemetry` (hot-partition
-detection) and `HealthMetrics` (full-table-scan detection) with the
-default rule so the SRE dashboard can show top partitions during a bug
-scenario.
-
-Phase 5 adds RUM + the CloudFront origin request policy so the browser
-end of the trace lands on the GenAI dashboard's session view.
 
 ## What this repo deliberately does *not* include
 

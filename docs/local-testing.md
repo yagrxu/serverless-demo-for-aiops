@@ -184,6 +184,52 @@ curl -s -X POST http://localhost:8082/invocations \
 ./local/scripts/down.sh --purge  # also prune images/volumes + wipe logs
 ```
 
+## Observability in local mode
+
+Local mode does **not** have CloudWatch, Application Signals, X-Ray, or
+RUM. The full observability signal chain is only active on the deployed
+test account.
+
+What works locally:
+
+- **Structured logging (Powertools Logger)** — the Lambda handlers use
+  `aws_lambda_powertools.Logger`, which writes JSON to stdout regardless
+  of environment. You'll see structured log lines in the API container
+  logs (`docker compose logs api`) with fields like `service`,
+  `cold_start`, and `function_request_id`.
+
+What does NOT work locally:
+
+- **ADOT Lambda layer** — the `AWS_LAMBDA_EXEC_WRAPPER=/opt/otel-instrument`
+  wrapper is a Lambda-only mechanism. Locally the handlers run inside a
+  plain FastAPI process, so the ADOT layer is never invoked and no spans
+  or metrics are exported.
+
+- **Agent auto-instrumentation (`opentelemetry-instrument`)** — in AWS
+  the Dockerfile CMD runs `opentelemetry-instrument uvicorn server:app …`
+  which bootstraps the ADOT distro. Locally, agents run directly with
+  `uvicorn server:app` on the host (no Docker, no `opentelemetry-instrument`),
+  so no OTel traces are produced.
+
+- **CloudWatch metrics, alarms, dashboards** — Powertools Metrics flushes
+  EMF blobs to stdout, but without the CloudWatch Logs agent there is no
+  ingestion. Alarms and dashboards are cloud-only.
+
+- **X-Ray trace propagation** — no X-Ray daemon runs locally, so
+  `xray_trace_id` fields in log lines will be empty or absent.
+
+- **RUM** — the UI dev servers don't load `aws-rum-web` (the RUM
+  monitor ID env vars are unset), so no browser telemetry is collected.
+
+For full observability testing, deploy to the test account:
+
+```bash
+git push --no-verify --force-with-lease origin <branch>:test
+```
+
+This triggers the CI pipeline against the `cloudops-demo` account where
+all CloudWatch, X-Ray, Application Signals, and RUM resources are live.
+
 ## Troubleshooting
 
 **`api` container logs `KeyError: 'CAT_PROFILES_TABLE'`** — compose

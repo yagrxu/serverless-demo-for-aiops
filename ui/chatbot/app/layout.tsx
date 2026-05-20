@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { RumInit } from './components/RumInit';
 
 export const metadata: Metadata = {
   title: 'Cat Care Chatbot',
@@ -9,7 +10,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="zh">
-      <body>{children}</body>
+      <body>
+        <RumInit />
+        {children}
+      </body>
     </html>
   );
 }
