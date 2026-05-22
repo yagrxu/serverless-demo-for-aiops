@@ -14,12 +14,12 @@ import * as ecr from 'aws-cdk-lib/aws-ecr';
  * expired after 7 days. Repos can be force-deleted (demo-only).
  */
 export class EcrStack extends cdk.Stack {
-  readonly repos: Record<'langgraph' | 'strands' | 'chatbot', ecr.Repository>;
+  readonly repos: Record<'langgraph' | 'strands' | 'chatbot' | 'trafgen', ecr.Repository>;
 
   constructor(scope: Construct, id: string, projectName: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
-    const mk = (name: 'langgraph' | 'strands' | 'chatbot') =>
+    const mk = (name: 'langgraph' | 'strands' | 'chatbot' | 'trafgen') =>
       new ecr.Repository(this, `${name}Repo`, {
         repositoryName: `${projectName}-${name}`,
         imageScanOnPush: true,
@@ -39,6 +39,7 @@ export class EcrStack extends cdk.Stack {
       langgraph: mk('langgraph'),
       strands: mk('strands'),
       chatbot: mk('chatbot'),
+      trafgen: mk('trafgen'),
     };
 
     for (const [k, r] of Object.entries(this.repos)) {

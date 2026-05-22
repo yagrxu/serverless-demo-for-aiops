@@ -1,0 +1,46 @@
+[project]
+name = "trafgen"
+version = "0.1.0"
+description = "Traffic generator for the cat-care AIOps demo"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx[http2]>=0.27.0",
+    "pydantic>=2.7.0",
+    "pyyaml>=6.0.1",
+    "typer>=0.12.0",
+    "boto3>=1.34.0",
+    "opentelemetry-api>=1.24.0",
+]
+
+[project.scripts]
+trafgen = "trafgen.cli:app"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.21.0",
+    "hypothesis>=6.100.0",
+    "freezegun>=1.4.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = [
+    "integration_local: marks tests requiring the local stack",
+    "integration_cloud: marks tests requiring AWS cloud access",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = true

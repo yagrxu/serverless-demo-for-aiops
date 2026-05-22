@@ -320,6 +320,35 @@ Override the model:
 MODEL_ID=anthropic.claude-sonnet-4-20250514-v1:0 ./local/scripts/up.sh
 ```
 
+## Traffic Generator
+
+The `trafgen/` directory contains a Python CLI that produces realistic,
+observable load against both the REST API and the agent stack. It runs
+locally or in the cloud using the same codebase — only the `--target`
+flag changes.
+
+| Mode | Command | Auth | Output |
+|------|---------|------|--------|
+| Local | `trafgen run --target local --rps 1 --duration 5m` | none | `./runs/<run_id>.jsonl` |
+| Cloud (laptop) | `trafgen run --target cloud --rps 0.5 --duration 30m` | SigV4 (boto3 chain) | `./runs/<run_id>.jsonl` + S3 |
+| Cloud (Fargate) | Hourly EventBridge schedule | Task role | CloudWatch Logs + S3 |
+
+The Fargate runner is deployed by `TrafgenStack` (`cdk/lib/trafgen-stack.ts`)
+and gated behind `-c trafgenEnabled=true` so it doesn't affect existing
+deploys. It uses a 256 CPU / 512 MB ARM64 task definition, runs for 55
+minutes per hour, and writes manifests to an S3 bucket with 7-day
+lifecycle.
+
+Every dispatched call carries a W3C `traceparent` header so backend
+telemetry (CloudWatch, Application Signals, X-Ray) can be filtered to
+generator traffic. The run manifest (JSONL) records every call with its
+traceparent, latency, status, and persona — enabling post-hoc correlation
+between generator activity and observed failures.
+
+See [`trafgen/README.md`](../trafgen/README.md) for install and usage,
+and [`.kiro/specs/traffic-generator/design.md`](../.kiro/specs/traffic-generator/design.md)
+for the full design.
+
 ## Deployment pipeline
 
 `main` is the source of truth. Two deployment pointer branches —

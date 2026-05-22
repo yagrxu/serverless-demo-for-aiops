@@ -1,0 +1,139 @@
+# Baseline traffic profile for the cat-care AIOps demo.
+#
+# Designed for continuous cloud execution (55min/hour via Fargate).
+# Feeding behavior is realistic: ~3 feedings per cat per day.
+# Anomalous feedings occur at ~5% rate for AIOps detection.
+#
+# At 0.5 RPS over 55 minutes = ~1650 scenario picks per hour.
+# Feeding scenarios have very low weight so only ~3-5 feedings/hour
+# across all cats (realistic for 3 cats = ~1-2 per cat per day).
+
+defaults:
+  rps: 0.5
+  duration: 55m
+  seed: 42
+
+personas:
+  - id: owner_alice
+    cat_ids: ["cat-001", "cat-002"]
+    device_ids: ["dev-001", "dev-002"]
+    locale: en-US
+
+  - id: owner_bob
+    cat_ids: ["cat-003"]
+    device_ids: ["dev-003"]
+    locale: en-US
+
+  - id: anon_browser
+    cat_ids: []
+    device_ids: []
+    locale: en-US
+
+scenarios:
+  # --- READ-HEAVY scenarios (bulk of traffic) ---
+
+  - id: browse_cats
+    surface: rest
+    weight: 25
+    allowed_personas: [owner_alice, owner_bob, anon_browser]
+    steps:
+      - call: list_cats
+
+  - id: check_feeding_history
+    surface: rest
+    weight: 20
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: list_feedings
+        path_params:
+          cat_id: "${persona.cat_ids[0]}"
+
+  - id: health_browse
+    surface: rest
+    weight: 20
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: get_health
+        path_params:
+          cat_id: "${persona.cat_ids[0]}"
+      - call: get_alerts
+        path_params:
+          cat_id: "${persona.cat_ids[0]}"
+
+  - id: device_telemetry
+    surface: rest
+    weight: 15
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: post_telemetry
+        path_params:
+          id: "${persona.device_ids[0]}"
+        body:
+          temperature: { sample: { dist: normal, mean: 22.0, std: 2.0 } }
+          humidity: { sample: { dist: uniform, min: 30, max: 70 } }
+
+  # --- NORMAL FEEDING (very low weight = realistic frequency) ---
+  # At weight 2 out of total ~100, this fires ~2% of the time.
+  # 0.5 RPS × 3300s × 2% = ~33 picks → but only ~3 cats, so ~11 per cat/day.
+  # Adjusted to weight 0.5 → ~0.5% → ~8 feedings/day across 3 cats ≈ 2-3 per cat.
+
+  - id: normal_feeding
+    surface: rest
+    weight: 0.02
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: create_feeding
+        body:
+          cat_id: "${persona.cat_ids[0]}"
+          food_type: { sample: { dist: choices, choices: [wet, dry], weights: [0.6, 0.4] } }
+          amount_grams: { sample: { dist: normal, mean: 50, std: 10 } }
+
+  # --- ANOMALOUS FEEDING (even lower weight = rare, for AIOps detection) ---
+  # ~0.05% of picks → roughly 1 anomaly per day.
+  # Characteristics that should trigger alerts:
+  #   - Unusually large amount (200-500g vs normal 40-60g)
+  #   - Could happen at any hour (including 3am)
+
+  - id: anomalous_feeding
+    surface: rest
+    weight: 0.002
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: create_feeding
+        body:
+          cat_id: "${persona.cat_ids[0]}"
+          food_type: "wet"
+          amount_grams: { sample: { dist: uniform, min: 200, max: 500 } }
+
+  # --- AGENT scenarios ---
+
+  - id: chat_health_inquiry
+    surface: agent
+    via: chatbot
+    weight: 10
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "How is {cat_name} doing today?"
+      - "Show me the health status for {cat_name}"
+      - "Any alerts for {cat_name}?"
+      - "When was {cat_name} last fed?"
+
+  - id: chat_device_check
+    surface: agent
+    via: chatbot
+    weight: 5
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "What devices are registered?"
+      - "Show me device status"
+      - "Is the feeder online?"
+
+  - id: chat_anonymous_browse
+    surface: agent
+    via: chatbot
+    weight: 5
+    allowed_personas: [anon_browser]
+    prompts:
+      - "List all cats"
+      - "What can you help me with?"
+      - "Show me recent feedings"

@@ -230,6 +230,34 @@ git push --no-verify --force-with-lease origin <branch>:test
 This triggers the CI pipeline against the `cloudops-demo` account where
 all CloudWatch, X-Ray, Application Signals, and RUM resources are live.
 
+## Traffic Generator (`trafgen`)
+
+The traffic generator can run against the local stack to produce
+realistic load for testing. It does not require any additional ports —
+it only consumes the existing API (`:8000`), chatbot (`:3000`),
+LangGraph (`:8081`), and Strands (`:8082`) endpoints.
+
+```bash
+# Install (from repo root)
+cd trafgen
+pip install -e .
+# or: uv sync
+
+# Quick smoke test — 1 RPS for 30 seconds against the local stack
+trafgen run --target local --profile profiles/baseline.yaml --rps 1 --duration 30s
+
+# Dry run (no HTTP calls, just prints scenario/persona picks)
+trafgen run --target local --profile profiles/baseline.yaml --dry-run --duration 10s
+```
+
+The manifest is written to `trafgen/runs/<run_id>.jsonl`. Each line
+records the scenario, persona, endpoint, status, latency, and
+traceparent for one dispatched call.
+
+Prerequisites: the local stack must be running (`./local/scripts/up.sh`).
+The generator will emit connection errors if the API shim is not
+reachable on `:8000`.
+
 ## Troubleshooting
 
 **`api` container logs `KeyError: 'CAT_PROFILES_TABLE'`** — compose
