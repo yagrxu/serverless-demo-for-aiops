@@ -29,6 +29,7 @@ cdk/
     gateway-stack.ts      # AgentCore Gateway (MCP) + Lambda targets + X-Ray delivery
     agent-stack.ts        # AgentCore runtimes (langgraph, strands)
     fargate-stack.ts      # ECS Fargate + ALB hosting the chatbot BFF
+    trafgen-stack.ts      # ECS Fargate scheduled task for the traffic generator
     ui-stack.ts           # CloudFront + S3 for the device-sim and admin UIs
     observability-stack.ts # Application Signals discovery (one-shot per account+region)
     observability.ts      # Region→ADOT-layer-ARN table + Lambda wiring helpers
@@ -40,6 +41,7 @@ cdk/
 agents/
   langgraph/              # ReAct agent using LangChain + LangGraph
   strands/                # Model-driven agent using Strands SDK
+trafgen/                  # Traffic generator — produces realistic load for AIOps baseline
 mcp-server/               # MCP Server — local equivalent of AgentCore Gateway
 ui/
   chatbot/                # Split-screen comparison of LangGraph vs Strands

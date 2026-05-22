@@ -10,6 +10,7 @@ import { EcrStack } from '../lib/ecr-stack';
 import { UiStack } from '../lib/ui-stack';
 import { FargateStack } from '../lib/fargate-stack';
 import { ObservabilityStack } from '../lib/observability-stack';
+import { TrafgenStack } from '../lib/trafgen-stack';
 import { defaultConfig } from '../lib/config';
 
 const app = new cdk.App();
@@ -103,6 +104,22 @@ const ui = new UiStack(app, `${cfg.projectName}-ui`, {
   appRunnerServiceUrl: chatbotAlbDnsName,
   projectName: cfg.projectName,
 });
+
+// --- Traffic Generator (optional) ---
+// Only construct when `-c trafgenEnabled=true` is passed so it doesn't
+// break existing deploys that haven't pushed the trafgen image yet.
+const trafgenEnabled = app.node.tryGetContext('trafgenEnabled') === 'true';
+if (trafgenEnabled) {
+  new TrafgenStack(app, `${cfg.projectName}-trafgen`, {
+    env,
+    trafgenRepo: ecr.repos.trafgen,
+    imageTag,
+    apiUrl: api.api.url,
+    chatbotUrl: chatbotAlbDnsName ? `http://${chatbotAlbDnsName}` : 'http://placeholder',
+    langgraphRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_langgraph',
+    strandsRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_strands',
+  });
+}
 
 new ObservabilityStack(app, `${cfg.projectName}-observability`, {
   env,
