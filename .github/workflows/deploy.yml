@@ -281,7 +281,7 @@ jobs:
       - name: ECR login
         if: >-
           env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
-          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true' || env.CHG_TRAFGEN == 'true'
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin \
@@ -375,7 +375,7 @@ jobs:
         if: >-
           env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
           env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true' ||
-          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true'
+          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_TRAFGEN == 'true'
         working-directory: cdk
         run: |
           npx cdk deploy \
