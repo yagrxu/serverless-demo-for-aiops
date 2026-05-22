@@ -116,6 +116,7 @@ jobs:
       langgraph:  ${{ steps.filter.outputs.langgraph }}
       strands:    ${{ steps.filter.outputs.strands }}
       mcp_server: ${{ steps.filter.outputs.mcp_server }}
+      trafgen:    ${{ steps.filter.outputs.trafgen }}
       first_run:  ${{ steps.firstrun.outputs.first_run }}
       force_all:  ${{ steps.firstrun.outputs.force_all }}
     steps:
@@ -172,6 +173,8 @@ jobs:
               - 'agents/strands/**'
             mcp_server:
               - 'mcp-server/**'
+            trafgen:
+              - 'trafgen/**'
 
   deploy:
     name: CDK Deploy (${{ needs.resolve.outputs.environment }})
@@ -190,6 +193,7 @@ jobs:
       CHG_CHATBOT:  ${{ needs.changes.outputs.chatbot }}
       CHG_LANGGRAPH: ${{ needs.changes.outputs.langgraph }}
       CHG_STRANDS:  ${{ needs.changes.outputs.strands }}
+      CHG_TRAFGEN:  ${{ needs.changes.outputs.trafgen }}
 
     steps:
       - name: Checkout
@@ -262,16 +266,14 @@ jobs:
           env.CHG_CDK == 'true' || env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true'
         working-directory: cdk
         run: |
-          # -c imageTag=${{ github.sha }} so AgentStack synth doesn't
-          # fall back to `:latest` for exports that feed other stacks;
-          # this image tag is also the one Phase 3 will deploy with.
           npx cdk deploy \
             ${PROJECT_NAME}-ecr \
             ${PROJECT_NAME}-data \
             ${PROJECT_NAME}-api \
             ${PROJECT_NAME}-gateway \
             --require-approval never \
-            -c imageTag=${{ github.sha }}
+            -c imageTag=${{ github.sha }} \
+            -c trafgenEnabled=true
 
       # ===================================================================
       # Phase 2: Build and push Docker images
@@ -315,6 +317,16 @@ jobs:
           docker buildx build --platform linux/arm64 \
             --tag "${repo}:${SHA}" --tag "${repo}:latest" --push ui/chatbot
 
+      - name: "Build and push: trafgen"
+        if: env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_TRAFGEN == 'true'
+        env:
+          ACCOUNT_ID: ${{ steps.aws.outputs.account }}
+          SHA: ${{ github.sha }}
+        run: |
+          repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-trafgen"
+          docker buildx build --platform linux/arm64 \
+            --tag "${repo}:${SHA}" --tag "${repo}:latest" --push trafgen
+
       # Retag unchanged images to this SHA so all stacks can use the same imageTag
       - name: Retag unchanged images
         if: >-
@@ -350,7 +362,8 @@ jobs:
           npx cdk deploy \
             ${PROJECT_NAME}-agents \
             --require-approval never \
-            -c imageTag=${{ github.sha }}
+            -c imageTag=${{ github.sha }} \
+            -c trafgenEnabled=true
 
       # ===================================================================
       # Phase 4: Deploy fargate + UI + observability.
@@ -358,7 +371,7 @@ jobs:
       # references the CloudFront distribution. Fargate also needs the
       # runtime ARNs from AgentStack (Phase 3) when deployAgents=true.
       # ===================================================================
-      - name: "Phase 4: Deploy fargate + UI + observability"
+      - name: "Phase 4: Deploy fargate + UI + observability + trafgen"
         if: >-
           env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
           env.CHG_LAMBDA == 'true' || env.CHG_CHATBOT == 'true' ||
@@ -369,5 +382,7 @@ jobs:
             ${PROJECT_NAME}-fargate \
             ${PROJECT_NAME}-ui \
             ${PROJECT_NAME}-observability \
+            ${PROJECT_NAME}-trafgen \
             --require-approval never \
-            -c imageTag=${{ github.sha }}
+            -c imageTag=${{ github.sha }} \
+            -c trafgenEnabled=true
