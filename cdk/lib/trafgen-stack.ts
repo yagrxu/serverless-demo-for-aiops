@@ -82,6 +82,20 @@ export class TrafgenStack extends cdk.Stack {
       ],
     }));
 
+    // Allow OTel to emit traces and metrics
+    taskRole.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'xray:PutTraceSegments',
+        'xray:PutTelemetryRecords',
+        'cloudwatch:PutMetricData',
+        'logs:CreateLogStream',
+        'logs:PutLogEvents',
+        'logs:DescribeLogGroups',
+        'logs:DescribeLogStreams',
+      ],
+      resources: ['*'],
+    }));
+
     // --- Task Definition ---
     const taskDef = new ecs.FargateTaskDefinition(this, 'TrafgenTaskDef', {
       cpu: 256,

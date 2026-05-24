@@ -11,6 +11,11 @@ from typing import Optional
 
 import typer
 
+from .observability import configure_logging, emit_run_metrics
+
+# Configure structured JSON logging on import
+configure_logging()
+
 app = typer.Typer(
     name="trafgen",
     help="Traffic generator for the cat-care AIOps demo.",
@@ -117,6 +122,8 @@ def run(
             f"errors={summary.total_errors} "
             f"saturation_drops={summary.saturation_drops}"
         )
+        # Emit CloudWatch EMF metrics
+        emit_run_metrics(summary)
         if summary.scenarios:
             typer.echo("\nPer-scenario stats:")
             for s in summary.scenarios:

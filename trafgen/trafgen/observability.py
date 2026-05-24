@@ -1,12 +1,48 @@
 """Observability models and run manifest for trafgen."""
 from __future__ import annotations
 
+import json
 import logging
+import os
 import secrets
+import sys
 from datetime import datetime
 from typing import Literal, TextIO
 
 from pydantic import BaseModel
+
+
+# ---------------------------------------------------------------------------
+# Structured JSON logging
+# ---------------------------------------------------------------------------
+
+def configure_logging() -> None:
+    """Configure structured JSON logging for CloudWatch Logs.
+
+    In cloud mode (ECS/Fargate), logs go to stdout and are picked up by
+    the awslogs driver. The JSON format enables CloudWatch Logs Insights
+    queries on structured fields.
+    """
+    try:
+        from pythonjsonlogger import jsonlogger
+
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = jsonlogger.JsonFormatter(
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            rename_fields={"asctime": "timestamp", "levelname": "level"},
+        )
+        handler.setFormatter(formatter)
+
+        root = logging.getLogger()
+        root.handlers.clear()
+        root.addHandler(handler)
+        root.setLevel(logging.INFO)
+    except ImportError:
+        # Fallback to basic logging if python-json-logger not installed
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        )
 
 
 logger = logging.getLogger(__name__)
@@ -193,3 +229,77 @@ def _percentile(sorted_values: list[float], pct: float) -> float:
         return sorted_values[-1]
     d = k - f
     return sorted_values[f] + d * (sorted_values[c] - sorted_values[f])
+
+
+# ---------------------------------------------------------------------------
+# CloudWatch EMF Metrics
+# ---------------------------------------------------------------------------
+
+def emit_run_metrics(summary: "RunSummary") -> None:
+    """Emit run summary as CloudWatch Embedded Metric Format (EMF).
+
+    When running in ECS/Fargate with the awslogs driver, EMF-formatted
+    log lines are automatically parsed by CloudWatch into metrics.
+    This gives us custom metrics without needing a metrics SDK.
+    """
+    emf_payload = {
+        "_aws": {
+            "Timestamp": int(datetime.now().timestamp() * 1000),
+            "CloudWatchMetrics": [
+                {
+                    "Namespace": "Trafgen",
+                    "Dimensions": [["RunId"]],
+                    "Metrics": [
+                        {"Name": "TotalDispatched", "Unit": "Count"},
+                        {"Name": "TotalErrors", "Unit": "Count"},
+                        {"Name": "ErrorRate", "Unit": "Percent"},
+                        {"Name": "SaturationDrops", "Unit": "Count"},
+                    ],
+                }
+            ],
+        },
+        "RunId": summary.run_id,
+        "TotalDispatched": summary.total_events,
+        "TotalErrors": summary.total_errors,
+        "ErrorRate": summary.error_rate * 100,
+        "SaturationDrops": summary.saturation_drops,
+    }
+
+    # EMF requires printing to stdout as a single JSON line
+    print(json.dumps(emf_payload), flush=True)
+
+    # Also emit per-scenario metrics
+    for scenario_stat in summary.scenarios:
+        scenario_emf = {
+            "_aws": {
+                "Timestamp": int(datetime.now().timestamp() * 1000),
+                "CloudWatchMetrics": [
+                    {
+                        "Namespace": "Trafgen",
+                        "Dimensions": [["ScenarioId"]],
+                        "Metrics": [
+                            {"Name": "ScenarioCount", "Unit": "Count"},
+                            {"Name": "ScenarioErrors", "Unit": "Count"},
+                            {"Name": "ScenarioP50Ms", "Unit": "Milliseconds"},
+                            {"Name": "ScenarioP95Ms", "Unit": "Milliseconds"},
+                        ],
+                    }
+                ],
+            },
+            "ScenarioId": scenario_stat.scenario_id,
+            "ScenarioCount": scenario_stat.count,
+            "ScenarioErrors": scenario_stat.errors,
+            "ScenarioP50Ms": scenario_stat.p50_ms,
+            "ScenarioP95Ms": scenario_stat.p95_ms,
+        }
+        print(json.dumps(scenario_emf), flush=True)
+
+    logger.info(
+        "EMF metrics emitted",
+        extra={
+            "run_id": summary.run_id,
+            "total_dispatched": summary.total_events,
+            "total_errors": summary.total_errors,
+            "error_rate": summary.error_rate,
+        },
+    )
