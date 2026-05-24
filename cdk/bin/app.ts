@@ -115,7 +115,7 @@ if (trafgenEnabled) {
     trafgenRepo: ecr.repos.trafgen,
     imageTag,
     apiUrl: api.api.url,
-    chatbotUrl: chatbotAlbDnsName ? `http://${chatbotAlbDnsName}` : 'http://placeholder',
+    chatbotUrl: `https://${ui.distribution.distributionDomainName}`,
     langgraphRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_langgraph',
     strandsRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_strands',
   });
