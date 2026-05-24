@@ -74,7 +74,10 @@ export class AgentStack extends cdk.Stack {
           },
           RoleArn: agentRole.roleArn,
           NetworkConfiguration: { NetworkMode: 'PUBLIC' },
-          EnvironmentVariables: { MCP_SERVER_URL: props.mcpServerUrl },
+          EnvironmentVariables: {
+            MCP_SERVER_URL: props.mcpServerUrl,
+            MODEL_ID: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+          },
         },
       });
       // Ensure the role + all policies are fully created before the runtime
