@@ -2,7 +2,15 @@ import json
 import os
 from pathlib import Path
 from contextvars import ContextVar
-from opentelemetry.sdk.trace import SpanProcessor
+try:
+    from opentelemetry.sdk.trace import SpanProcessor
+except ImportError:
+    # Allow running without opentelemetry (e.g., in CI tests)
+    class SpanProcessor:  # type: ignore[no-redef]
+        def on_start(self, span, parent_context=None): pass
+        def on_end(self, span): pass
+        def shutdown(self): pass
+        def force_flush(self, timeout_millis=None): pass
 
 _cache = None
 _cache_mtime = 0
@@ -34,7 +42,8 @@ def get_prompt(name: str) -> str:
         latest_msgs = history[-1].get("messages")
         if latest_msgs is not None:
             compare_msgs = data.get("_templateMessages", msgs)
-            normalize = lambda m: [(x.get("role"), x.get("content")) for x in m]
+            def normalize(m):
+                return [(x.get("role"), x.get("content")) for x in m]
             if normalize(compare_msgs) != normalize(latest_msgs):
                 ver_id += "-draft"
     else:
