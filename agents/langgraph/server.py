@@ -34,20 +34,10 @@ from streamable_http_sigv4 import SigV4HTTPXAuth
 # ---------------------------------------------------------------------------
 
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
-MODEL_ID = os.environ.get("MODEL_ID", "anthropic.claude-haiku-4-5-20251001-v1:0")
+MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-SYSTEM_PROMPT = (
-    "You are a helpful cat-care assistant. You help users manage their cats' "
-    "feeding schedules, health monitoring, and IoT devices (feeders, fountains, "
-    "trackers). Use the available tools to look up real data before answering. "
-    "Be concise and friendly.\n\n"
-    "IMPORTANT: Most tools require a cat_id (e.g., 'hotpot', 'bbq'), not a cat name. "
-    "When the user refers to a cat by name or nickname (e.g., '火锅', '锅锅', '烧烤', '烤烤'), "
-    "you MUST first call lookup_cat_by_name to get the cat_id, then use that cat_id "
-    "in subsequent tool calls like get_feedings, get_health_metrics, etc.\n\n"
-    "If a cat_id is already provided in the context, you can skip the lookup and use it directly."
-)
+from prompt_loader import get_prompt
 
 # Build the LLM once — it's stateless and safe to share across requests.
 _llm = ChatBedrockConverse(model=MODEL_ID, region_name=AWS_REGION)
@@ -85,7 +75,7 @@ async def _build_agent_with_tools():
     """
     client = MultiServerMCPClient({"cat-care": _build_mcp_connection_config()})
     tools = await client.get_tools()
-    return create_react_agent(model=_llm, tools=tools, prompt=SYSTEM_PROMPT)
+    return create_react_agent(model=_llm, tools=tools, prompt=get_prompt("cat_care_assistant"))
 
 
 # ---------------------------------------------------------------------------
