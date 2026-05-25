@@ -279,9 +279,7 @@ jobs:
       # Phase 2: Build and push Docker images
       # ===================================================================
       - name: ECR login
-        if: >-
-          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' || env.CHG_CDK == 'true' ||
-          env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true' || env.CHG_TRAFGEN == 'true'
+        id: ecr_login
         run: |
           aws ecr get-login-password --region "$AWS_REGION" \
             | docker login --username AWS --password-stdin \
@@ -330,9 +328,7 @@ jobs:
       # Retag unchanged images to this SHA so all stacks can use the same imageTag
       - name: Retag unchanged images
         if: >-
-          env.FIRST_RUN != 'true' && env.FORCE_ALL != 'true' && (
-            env.CHG_LANGGRAPH == 'true' || env.CHG_STRANDS == 'true' || env.CHG_CHATBOT == 'true'
-          )
+          env.FIRST_RUN != 'true' && env.FORCE_ALL != 'true'
         env:
           ACCOUNT_ID: ${{ steps.aws.outputs.account }}
           SHA: ${{ github.sha }}
@@ -343,11 +339,12 @@ jobs:
             if [ "$changed" = "true" ]; then return 0; fi
             local repo="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT_NAME}-${name}"
             echo ">> Retagging ${name}:latest → :${SHA}"
-            docker buildx imagetools create --tag "${repo}:${SHA}" "${repo}:latest"
+            docker buildx imagetools create --tag "${repo}:${SHA}" "${repo}:latest" || true
           }
           retag langgraph "$CHG_LANGGRAPH"
           retag strands   "$CHG_STRANDS"
           retag chatbot   "$CHG_CHATBOT"
+          retag trafgen   "$CHG_TRAFGEN"
 
       # ===================================================================
       # Phase 3: Deploy agents (most-frequently-changing stack — pulled
