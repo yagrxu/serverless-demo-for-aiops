@@ -73,6 +73,8 @@ def _dispatch_gateway(event, context):
             amount_grams = tool_input.get("amount_grams")
             if amount_grams is None:
                 return {"error": "amount_grams is required"}
+            if isinstance(amount_grams, float):
+                amount_grams = Decimal(str(amount_grams))
             food_type = tool_input.get("food_type")
             if not food_type:
                 return {"error": "food_type is required"}
@@ -122,11 +124,14 @@ def lambda_handler(event, _ctx):
         cat_id = body.get("cat_id")
         if not cat_id:
             return _resp(400, {"message": "cat_id is required"})
+        amount = body.get("amount_grams")
+        if isinstance(amount, float):
+            amount = Decimal(str(amount))
         item = {
             "cat_id": cat_id,
             "ts": body.get("ts") or _now_iso(),
             "event_id": str(uuid.uuid4()),
-            "amount_grams": body.get("amount_grams"),
+            "amount_grams": amount,
             "food_type": body.get("food_type"),
             "source": body.get("source", "manual"),
         }
