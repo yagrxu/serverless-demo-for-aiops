@@ -91,9 +91,17 @@ export class ApiStack extends cdk.Stack {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
       code: bundledCode('feeding'),
-      environment: { FEEDING_EVENTS_TABLE: props.feedingEvents.tableName },
+      environment: {
+        FEEDING_EVENTS_TABLE: props.feedingEvents.tableName,
+        HEALTH_ALERTS_TABLE: props.healthAlerts.tableName,
+        DAILY_LIMIT_GRAMS: '200',
+        WET_FOOD_DAILY_LIMIT: '100',
+        DRY_FOOD_DAILY_LIMIT: '150',
+        MIN_INTERVAL_HOURS: '2',
+      },
     } as lambda.FunctionProps);
     props.feedingEvents.grantReadWriteData(feedingFn);
+    props.healthAlerts.grantWriteData(feedingFn);
 
     // --- health ---
     const healthFn = new lambda.Function(this, 'HealthFn', {
