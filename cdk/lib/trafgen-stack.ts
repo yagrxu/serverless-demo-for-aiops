@@ -98,8 +98,8 @@ export class TrafgenStack extends cdk.Stack {
 
     // --- Task Definition ---
     const taskDef = new ecs.FargateTaskDefinition(this, 'TrafgenTaskDef', {
-      cpu: 256,
-      memoryLimitMiB: 512,
+      cpu: 512,
+      memoryLimitMiB: 1024,
       runtimePlatform: {
         cpuArchitecture: ecs.CpuArchitecture.ARM64,
         operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
@@ -115,11 +115,31 @@ export class TrafgenStack extends cdk.Stack {
         TRAFGEN_LANGGRAPH_ARN: props.langgraphRuntimeArn,
         TRAFGEN_STRANDS_ARN: props.strandsRuntimeArn,
         TRAFGEN_S3_BUCKET: manifestBucket.bucketName,
+        // OTel: point exporter to the ADOT sidecar
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4317',
+        OTEL_SERVICE_NAME: 'trafgen',
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test',
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'trafgen',
         logRetention: logs.RetentionDays.ONE_WEEK,
       }),
+    });
+
+    // --- ADOT Collector Sidecar ---
+    // Receives OTel traces/metrics from the trafgen container on localhost:4317
+    // and exports them to X-Ray and CloudWatch.
+    taskDef.addContainer('adot-collector', {
+      image: ecs.ContainerImage.fromRegistry(
+        'public.ecr.aws/aws-observability/aws-otel-collector:latest'
+      ),
+      essential: false,
+      command: ['--config=/etc/ecs/ecs-xray.yaml'],
+      logging: ecs.LogDrivers.awsLogs({
+        streamPrefix: 'adot',
+        logRetention: logs.RetentionDays.ONE_WEEK,
+      }),
+      memoryLimitMiB: 64,
     });
 
     // --- EventBridge Schedule: run every hour ---
