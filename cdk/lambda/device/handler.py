@@ -33,6 +33,17 @@ def _default(o):
     raise TypeError
 
 
+def _to_decimal(obj):
+    """Recursively convert float values to Decimal for DynamoDB compatibility."""
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _to_decimal(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_decimal(i) for i in obj]
+    return obj
+
+
 def _resp(status, body):
     return {
         "statusCode": status,
@@ -147,7 +158,7 @@ def lambda_handler(event, _ctx):
             "device_id": device_id,
             "ts": body.get("ts") or _now_iso(),
             "kind": "telemetry",
-            "metrics": body.get("metrics") or {},
+            "metrics": _to_decimal(body.get("metrics") or {}),
         }
         try:
             TELEMETRY.put_item(Item=point)
