@@ -36,6 +36,8 @@ from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
+from prompt_loader import OmniPromptProcessor
+
 
 class CodeMetadataSpanProcessor(SpanProcessor):
     """Attaches code.filepath / code.lineno / code.function to every span."""
@@ -76,6 +78,7 @@ if hasattr(_provider, "add_span_processor"):
     # already set up an SDK provider + auto-loaded the LangChain
     # instrumentor. Attach only our metadata processor.
     _provider.add_span_processor(CodeMetadataSpanProcessor())
+    _provider.add_span_processor(OmniPromptProcessor())
 else:
     # Mode 3: plain `uvicorn server:app` with no wrapper. Set up the full
     # provider + framework instrumentation so local Omni trace collection
@@ -83,6 +86,7 @@ else:
     provider = TracerProvider()
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
     provider.add_span_processor(CodeMetadataSpanProcessor())
+    provider.add_span_processor(OmniPromptProcessor())
     trace.set_tracer_provider(provider)
 
     try:

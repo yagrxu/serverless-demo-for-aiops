@@ -110,20 +110,20 @@ class RestClient:
         return await self._request("POST", "/cats", ctx, json=body)
 
     async def list_feedings(self, ctx: CallContext, cat_id: str, **kwargs: Any) -> Response:
-        """GET /cats/{cat_id}/feedings"""
-        return await self._request("GET", f"/cats/{cat_id}/feedings", ctx)
+        """GET /feedings?cat_id={cat_id}"""
+        return await self._request("GET", "/feedings", ctx, params={"cat_id": cat_id})
 
     async def create_feeding(self, ctx: CallContext, body: dict[str, Any], **kwargs: Any) -> Response:
         """POST /feedings"""
         return await self._request("POST", "/feedings", ctx, json=body)
 
     async def get_health(self, ctx: CallContext, cat_id: str, **kwargs: Any) -> Response:
-        """GET /cats/{cat_id}/health"""
-        return await self._request("GET", f"/cats/{cat_id}/health", ctx)
+        """GET /health/{cat_id}"""
+        return await self._request("GET", f"/health/{cat_id}", ctx)
 
     async def get_alerts(self, ctx: CallContext, cat_id: str, **kwargs: Any) -> Response:
-        """GET /cats/{cat_id}/alerts"""
-        return await self._request("GET", f"/cats/{cat_id}/alerts", ctx)
+        """GET /health/{cat_id}/alerts"""
+        return await self._request("GET", f"/health/{cat_id}/alerts", ctx)
 
     async def post_telemetry(
         self, ctx: CallContext, device_id: str, body: dict[str, Any], **kwargs: Any

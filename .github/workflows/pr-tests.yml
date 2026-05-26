@@ -33,6 +33,8 @@ jobs:
               - 'cdk/lambda/**'
             agents:
               - 'agents/**'
+              - 'evaluation/**'
+              - 'mcp-server/**'
             ui:
               - 'ui/**'
 
@@ -300,6 +302,139 @@ jobs:
           npm ci
           npm test
 
+  agent-evaluation:
+    name: agent-evaluation
+    needs: [paths-filter]
+    if: needs.paths-filter.outputs.agents == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+          role-session-name: gha-pr-evaluation
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Install agent dependencies (langgraph)
+        working-directory: agents/langgraph
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Install agent dependencies (strands)
+        working-directory: agents/strands
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Install MCP server dependencies
+        working-directory: mcp-server
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Install API shim dependencies
+        working-directory: local/api
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt 2>/dev/null || true
+
+      - name: Install evaluation dependencies
+        working-directory: evaluation
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -r requirements.txt
+
+      - name: Start DynamoDB Local
+        run: |
+          docker run -d --name eval-dynamodb -p 8001:8000 amazon/dynamodb-local:latest
+          sleep 2
+
+      - name: Seed DynamoDB
+        run: |
+          cd local
+          bash scripts/init-ddb.sh || true
+          bash scripts/seed-ddb.sh || true
+
+      - name: Start API shim
+        working-directory: local/api
+        run: |
+          DYNAMODB_ENDPOINT=http://localhost:8001 \
+            .venv/bin/python -m uvicorn app:app --host 0.0.0.0 --port 8000 &
+          sleep 2
+
+      - name: Start MCP Server
+        working-directory: mcp-server
+        run: |
+          API_URL=http://localhost:8000 MCP_PORT=8083 \
+            .venv/bin/python -m uvicorn server:mcp.app --host 0.0.0.0 --port 8083 &
+          sleep 2
+
+      - name: Start LangGraph agent
+        working-directory: agents/langgraph
+        run: |
+          MCP_SERVER_URL=http://localhost:8083/mcp \
+            .venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8081 &
+
+      - name: Start Strands agent
+        working-directory: agents/strands
+        run: |
+          MCP_SERVER_URL=http://localhost:8083/mcp \
+            .venv/bin/python -m uvicorn server:app --host 0.0.0.0 --port 8082 &
+
+      - name: Wait for agents
+        run: |
+          for port in 8081 8082; do
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null "http://localhost:$port/ping" 2>/dev/null; then
+                echo "Agent on :$port ready"
+                break
+              fi
+              if [ "$i" -eq 30 ]; then
+                echo "::error::Agent on :$port failed to start"
+                exit 1
+              fi
+              sleep 1
+            done
+          done
+
+      - name: Run evaluation
+        working-directory: evaluation
+        run: |
+          .venv/bin/python runner.py \
+            --dataset datasets/comparative.yaml \
+            --output results/ci-run.json
+
+      - name: Run LLM-as-judge
+        working-directory: evaluation
+        run: |
+          .venv/bin/python judge.py \
+            results/ci-run.json \
+            --threshold 0.7 \
+            --fail-on-regression
+
+      - name: Upload evaluation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation-results
+          path: |
+            evaluation/results/ci-run.json
+            evaluation/results/ci-run-judged.json
+          retention-days: 14
+
   aggregate-status:
     name: aggregate-status
     if: always()
@@ -311,6 +446,7 @@ jobs:
       - lambda-tests
       - agent-tests
       - ui-tests
+      - agent-evaluation
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
@@ -322,7 +458,8 @@ jobs:
                    "${{ needs.lint-format.result }}" \
                    "${{ needs.lambda-tests.result }}" \
                    "${{ needs.agent-tests.result }}" \
-                   "${{ needs.ui-tests.result }}")
+                   "${{ needs.ui-tests.result }}" \
+                   "${{ needs.agent-evaluation.result }}")
           for r in "${results[@]}"; do
             if [[ "$r" == "failure" || "$r" == "cancelled" ]]; then
               echo "::error::One or more jobs failed or were cancelled: $r"

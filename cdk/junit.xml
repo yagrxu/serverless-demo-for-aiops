@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="2" failures="0" errors="0" time="2.346">
+  <testsuite name="DataStack" errors="0" failures="0" skipped="0" timestamp="2026-05-19T03:33:55" time="2.294" tests="2">
+    <testcase classname="DataStack creates seven DynamoDB tables" name="DataStack creates seven DynamoDB tables" time="0.001">
+    </testcase>
+    <testcase classname="DataStack CatProfiles table has correct partition key" name="DataStack CatProfiles table has correct partition key" time="0.002">
+    </testcase>
+  </testsuite>
+</testsuites>

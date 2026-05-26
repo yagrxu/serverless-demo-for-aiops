@@ -49,3 +49,8 @@ todo/
 # Local-only working folders (not pushed to git)
 reference/
 todo/
+.claude/
+.github/
+.cursor/
+.kiro/
+.agents/
