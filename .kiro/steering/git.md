@@ -23,6 +23,11 @@
 4. Deploy to test: `git push --no-verify --force-with-lease origin main:test`
 5. Deploy to production: fast-forward release to main
 
+## ALL changes go through PR
+
+- No direct pushes to main — every change (features, fixes, hotfixes) must go through a PR
+- This includes urgent fixes — create a branch, push, open PR, merge, then deploy
+
 ## Deploying to test
 
 ```bash

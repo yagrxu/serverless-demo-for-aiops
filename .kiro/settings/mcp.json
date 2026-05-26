@@ -11,6 +11,31 @@
         "aws___search_documentation",
         "aws___read_documentation"
       ]
+    },
+    "omni-studio": {
+      "command": "node",
+      "args": [
+        "/Users/yagrxu/.kiro/extensions/amazon-internal.omni-studios-1.0.2055/out/mcp-server/mcp-proxy.js",
+        "--workspace",
+        "/Users/yagrxu/me/collaborations/2026/aiops/serverless-demo-for-aiops"
+      ],
+      "env": {
+        "OMNI_READY_AT": "1779758517302"
+      },
+      "autoApprove": [
+        "onboarding_report_progress",
+        "get_server_config",
+        "get_dev_server_output",
+        "configure_and_verify_dev_server",
+        "list_traces",
+        "save_agent_schema",
+        "invoke_agent",
+        "list_agent_schema_presets",
+        "configure_credentials",
+        "list_datasets",
+        "list_evaluators",
+        "list_annotation_kinds"
+      ]
     }
   }
 }

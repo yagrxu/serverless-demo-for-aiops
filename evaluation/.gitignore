@@ -1,0 +1,5 @@
+results/*.json
+results/*-judged.json
+__pycache__/
+*.pyc
+.venv/
