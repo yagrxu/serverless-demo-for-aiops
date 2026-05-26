@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import json
 import os
+import sys
 import time
 import uuid
 from datetime import datetime, timezone
@@ -310,6 +311,27 @@ def main():
         default=None,
         help="Output JSON path (default: results/<timestamp>.json)",
     )
+    parser.add_argument(
+        "--judge",
+        action="store_true",
+        help="Run LLM-as-judge after collecting responses",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.7,
+        help="Judge pass threshold (default: 0.7, only used with --judge)",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Bedrock model ID for the judge (default: env JUDGE_MODEL_ID or haiku)",
+    )
+    parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit with code 1 if judge score is below threshold",
+    )
     args = parser.parse_args()
 
     # Run evaluation
@@ -332,6 +354,138 @@ def main():
         f"LangGraph OK: {output['summary']['langgraph_ok']} | "
         f"Strands OK: {output['summary']['strands_ok']}"
     )
+
+    # Run LLM-as-judge if requested
+    if args.judge:
+        print("\n" + "=" * 60)
+        print("Running LLM-as-judge...")
+        print("=" * 60 + "\n")
+
+        from judge import run_judge
+
+        judge_model = args.judge_model or os.environ.get(
+            "JUDGE_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+        )
+        judge_output = run_judge(str(out_path), judge_model, args.threshold)
+
+        # Save judge results
+        judge_path = out_path.with_name(f"{out_path.stem}-judged.json")
+        judge_path.write_text(json.dumps(judge_output, ensure_ascii=False, indent=2))
+
+        # Print combined report
+        _print_combined_report(output, judge_output)
+
+        if args.fail_on_regression and not judge_output["summary"]["overall_pass"]:
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# Combined report
+# ---------------------------------------------------------------------------
+
+
+def _print_combined_report(eval_output: dict, judge_output: dict):
+    """Print a combined report merging responses and judge scores."""
+    results = eval_output.get("results", [])
+    judgments = {j["id"]: j for j in judge_output.get("judgments", [])}
+    summary = judge_output["summary"]
+
+    print()
+    print("╔══════════════════════════════════════════════════════════════════╗")
+    print("║              AGENT EVALUATION REPORT                            ║")
+    print("╚══════════════════════════════════════════════════════════════════╝")
+    print()
+    print(f"  Judge Model:      {summary['model_id']}")
+    print(f"  Per-case threshold: {summary['threshold']}")
+    print(f"  Average threshold:  {summary['avg_threshold']}")
+    print(f"  Total cases:      {summary['total_cases']}")
+    print()
+
+    # Per-case details
+    print("┌─────────────────────────────────────────────────────────────────┐")
+    print("│  PER-CASE RESULTS                                              │")
+    print("└─────────────────────────────────────────────────────────────────┘")
+
+    for r in results:
+        case_id = r["id"]
+        category = r.get("category", "?")
+        j = judgments.get(case_id, {})
+
+        lg_score = j.get("langgraph", {}).get("score", -1)
+        st_score = j.get("strands", {}).get("score", -1)
+        lg_reasoning = j.get("langgraph", {}).get("reasoning", "")
+        st_reasoning = j.get("strands", {}).get("reasoning", "")
+
+        lg_icon = "✅" if lg_score >= summary["threshold"] else "❌"
+        st_icon = "✅" if st_score >= summary["threshold"] else "❌"
+
+        print()
+        print(f"  ── {case_id} [{category}] ──")
+
+        # Show prompt
+        if r["type"] == "single_turn":
+            prompt_preview = r.get("prompt", "")[:80]
+            print(f"  Prompt: {prompt_preview}")
+        else:
+            turns = r.get("turns", [])
+            print(f"  Turns:  {' → '.join(t[:30] for t in turns)}")
+
+        print()
+
+        # LangGraph
+        print(f"  LangGraph {lg_icon} {lg_score:.2f}")
+        if r["type"] == "single_turn":
+            resp = r.get("langgraph", {}).get("response", "")
+            latency = r.get("langgraph", {}).get("latency_ms", 0)
+        else:
+            turns_data = r.get("langgraph", {}).get("turns", [])
+            resp = turns_data[-1].get("response", "") if turns_data else ""
+            latency = r.get("langgraph", {}).get("total_latency_ms", 0)
+        print(f"    Latency: {latency:.0f}ms")
+        print(f"    Response: {resp[:120]}{'...' if len(resp) > 120 else ''}")
+        print(f"    Judge: {lg_reasoning}")
+
+        print()
+
+        # Strands
+        print(f"  Strands  {st_icon} {st_score:.2f}")
+        if r["type"] == "single_turn":
+            resp = r.get("strands", {}).get("response", "")
+            latency = r.get("strands", {}).get("latency_ms", 0)
+        else:
+            turns_data = r.get("strands", {}).get("turns", [])
+            resp = turns_data[-1].get("response", "") if turns_data else ""
+            latency = r.get("strands", {}).get("total_latency_ms", 0)
+        print(f"    Latency: {latency:.0f}ms")
+        print(f"    Response: {resp[:120]}{'...' if len(resp) > 120 else ''}")
+        print(f"    Judge: {st_reasoning}")
+
+    # Aggregate summary
+    print()
+    print("┌─────────────────────────────────────────────────────────────────┐")
+    print("│  SUMMARY                                                        │")
+    print("└─────────────────────────────────────────────────────────────────┘")
+    print()
+    print(f"  {'Agent':<12} {'Avg':>6} {'Min':>6} {'Below 0.7':>10} {'Result':>8}")
+    print(f"  {'─'*12} {'─'*6} {'─'*6} {'─'*10} {'─'*8}")
+    print(
+        f"  {'LangGraph':<12} "
+        f"{summary['langgraph']['avg_score']:>5.3f} "
+        f"{summary['langgraph']['min_score']:>5.3f} "
+        f"{summary['langgraph']['cases_below_threshold']:>10} "
+        f"{'PASS ✅' if summary['langgraph']['pass'] else 'FAIL ❌':>8}"
+    )
+    print(
+        f"  {'Strands':<12} "
+        f"{summary['strands']['avg_score']:>5.3f} "
+        f"{summary['strands']['min_score']:>5.3f} "
+        f"{summary['strands']['cases_below_threshold']:>10} "
+        f"{'PASS ✅' if summary['strands']['pass'] else 'FAIL ❌':>8}"
+    )
+    print()
+    print(f"  Overall: {'PASS ✅' if summary['overall_pass'] else 'FAIL ❌'}")
+    print(f"  (fail if any case < {summary['threshold']} OR avg < {summary['avg_threshold']})")
+    print()
 
 
 if __name__ == "__main__":
