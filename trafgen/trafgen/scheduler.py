@@ -67,7 +67,8 @@ async def dispatch(
     """
     try:
         with _tracer.start_as_current_span(
-            f"trafgen.dispatch.{scenario.id}",
+            "trafgen.dispatch",
+            kind=trace.SpanKind.SERVER,
             attributes={
                 "trafgen.scenario_id": scenario.id,
                 "trafgen.persona_id": persona.persona_id,
