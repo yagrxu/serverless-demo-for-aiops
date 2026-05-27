@@ -125,6 +125,9 @@ export class TrafgenStack extends cdk.Stack {
         OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4317',
         OTEL_SERVICE_NAME: 'trafgen',
         OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test,cloud.platform=aws_ecs,cloud.provider=aws',
+        // Use both W3C and X-Ray propagators so traceparent reaches
+        // API Gateway (which only reads X-Amzn-Trace-Id).
+        OTEL_PROPAGATORS: 'xray,tracecontext,baggage',
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'trafgen',
