@@ -45,25 +45,16 @@ from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
 def _patch_resource_for_xray_origin(provider) -> None:
     """Patch the provider's Resource so X-Ray exporter assigns a known origin.
 
-    AgentCore Runtime sets cloud.platform=aws_bedrock_agentcore which the
-    X-Ray collector exporter's determineAwsOrigin() does not recognize,
-    resulting in an empty origin and a duplicate gear-icon node in the
-    Service Map.
+    NOTE: This function is currently a no-op. We tried patching
+    cloud.platform from aws_bedrock_agentcore to aws_ecs_fargate to get
+    a known origin, but that removes the "BedrockAgentCore Runtime" type
+    label from the Service Map node. Keeping aws_bedrock_agentcore at
+    least preserves the type label even though the icon is a gear.
 
-    We replace it with aws_ecs_fargate (the actual underlying infra) so
-    the exporter maps it to AWS::ECS::Fargate. This only runs when we
-    detect we're inside AgentCore (cloud.platform == aws_bedrock_agentcore).
-
-    For local dev, this is a no-op.
+    The duplicate node issue requires a fix from AWS in the AgentCore
+    Runtime platform or ADOT distro.
     """
-    from opentelemetry.sdk.resources import Resource
-
-    resource = provider.resource
-    attrs = dict(resource.attributes)
-    if attrs.get("cloud.platform") == "aws_bedrock_agentcore":
-        attrs["cloud.platform"] = "aws_ecs_fargate"
-        new_resource = Resource(attrs, resource.schema_url)
-        provider._resource = new_resource
+    pass
 
 
 class CodeMetadataSpanProcessor(SpanProcessor):
