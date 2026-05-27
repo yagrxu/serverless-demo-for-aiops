@@ -68,7 +68,11 @@ export class ApiStack extends cdk.Stack {
       ...lambdaCommon,
       handler: 'handler.lambda_handler',
       code: bundledCode('cat-profile'),
-      environment: { CAT_PROFILES_TABLE: props.catProfiles.tableName, CAT_NAME_INDEX_TABLE: props.catNameIndex.tableName },
+      environment: {
+        CAT_PROFILES_TABLE: props.catProfiles.tableName,
+        CAT_NAME_INDEX_TABLE: props.catNameIndex.tableName,
+        OTEL_SERVICE_NAME: 'cat-profile',
+      },
     } as lambda.FunctionProps);
     props.catProfiles.grantReadWriteData(catFn);
     props.catNameIndex.grantReadWriteData(catFn);
@@ -81,6 +85,7 @@ export class ApiStack extends cdk.Stack {
       environment: {
         DEVICES_TABLE: props.devices.tableName,
         DEVICE_TELEMETRY_TABLE: props.deviceTelemetry.tableName,
+        OTEL_SERVICE_NAME: 'device',
       },
     } as lambda.FunctionProps);
     props.devices.grantReadWriteData(deviceFn);
@@ -98,6 +103,7 @@ export class ApiStack extends cdk.Stack {
         WET_FOOD_DAILY_LIMIT: '100',
         DRY_FOOD_DAILY_LIMIT: '150',
         MIN_INTERVAL_HOURS: '2',
+        OTEL_SERVICE_NAME: 'feeding',
       },
     } as lambda.FunctionProps);
     props.feedingEvents.grantReadWriteData(feedingFn);
@@ -111,6 +117,7 @@ export class ApiStack extends cdk.Stack {
       environment: {
         HEALTH_METRICS_TABLE: props.healthMetrics.tableName,
         HEALTH_ALERTS_TABLE: props.healthAlerts.tableName,
+        OTEL_SERVICE_NAME: 'health',
       },
     } as lambda.FunctionProps);
     props.healthMetrics.grantReadWriteData(healthFn);

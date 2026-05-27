@@ -26,9 +26,17 @@ Three startup modes are supported:
 The `add_span_processor` probe prevents the double-provider registration
 that broke the previous setup: we only construct a provider in Mode 3,
 where none exists.
+
+Additionally, when running inside AgentCore Runtime, the platform sets
+cloud.platform=aws_bedrock_agentcore which the X-Ray exporter does not
+recognize (it only maps aws_ecs, aws_eks, aws_ec2, etc. to an origin).
+This causes the container's SERVER span to appear as a duplicate
+gear-icon node in the Service Map. We patch the Resource to use
+aws_ecs_fargate so the exporter assigns the correct origin.
 """
 
 import inspect
+import os
 
 from opentelemetry import trace
 from opentelemetry.context import Context
@@ -37,6 +45,34 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
 from prompt_loader import OmniPromptProcessor
+
+
+def _patch_resource_for_xray_origin(provider: TracerProvider) -> None:
+    """Patch the provider's Resource so X-Ray exporter assigns a known origin.
+
+    AgentCore Runtime sets cloud.platform=aws_bedrock_agentcore which the
+    X-Ray collector exporter's determineAwsOrigin() does not recognize,
+    resulting in an empty origin and a duplicate gear-icon node in the
+    Service Map.
+
+    We replace it with aws_ecs_fargate (the actual underlying infra) so
+    the exporter maps it to AWS::ECS::Fargate. This only runs when we
+    detect we're inside AgentCore (deployment.environment.name contains
+    'bedrock-agentcore').
+
+    For local dev, this is a no-op — cloud.platform won't be
+    aws_bedrock_agentcore.
+    """
+    from opentelemetry.sdk.resources import Resource
+
+    resource = provider.resource
+    attrs = dict(resource.attributes)
+    if attrs.get("cloud.platform") == "aws_bedrock_agentcore":
+        attrs["cloud.platform"] = "aws_ecs_fargate"
+        # Rebuild the resource with patched attributes
+        new_resource = Resource(attrs, resource.schema_url)
+        # Replace the provider's resource (internal but stable across SDK versions)
+        provider._resource = new_resource
 
 
 class CodeMetadataSpanProcessor(SpanProcessor):
@@ -77,6 +113,7 @@ if hasattr(_provider, "add_span_processor"):
     # Mode 1 or 2: opentelemetry-instrument (cloud or local-with-wrapper)
     # already set up an SDK provider + auto-loaded the LangChain
     # instrumentor. Attach only our metadata processor.
+    _patch_resource_for_xray_origin(_provider)
     _provider.add_span_processor(CodeMetadataSpanProcessor())
     _provider.add_span_processor(OmniPromptProcessor())
 else:
