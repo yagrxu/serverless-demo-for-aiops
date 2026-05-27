@@ -65,6 +65,8 @@ const gateway = new GatewayStack(app, `${cfg.projectName}-gateway`, {
 
 // --- Chatbot Fargate + Agents ---
 let chatbotAlbDnsName: string | undefined;
+let langgraphRuntimeArn = 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_langgraph';
+let strandsRuntimeArn = 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_strands';
 
 if (cfg.deployAgents && !skipAgents) {
   const agents = new AgentStack(app, `${cfg.projectName}-agents`, {
@@ -74,12 +76,15 @@ if (cfg.deployAgents && !skipAgents) {
     repos: ecr.repos,
   });
 
+  langgraphRuntimeArn = agents.langgraphRuntimeArn;
+  strandsRuntimeArn = agents.strandsRuntimeArn;
+
   const fargate = new FargateStack(app, `${cfg.projectName}-fargate`, {
     env,
     imageTag,
     chatbotRepo: ecr.repos.chatbot,
-    langgraphRuntimeArn: agents.langgraphRuntimeArn,
-    strandsRuntimeArn: agents.strandsRuntimeArn,
+    langgraphRuntimeArn,
+    strandsRuntimeArn,
   });
   fargate.addDependency(agents);
 
@@ -90,8 +95,8 @@ if (cfg.deployAgents && !skipAgents) {
     env,
     imageTag,
     chatbotRepo: ecr.repos.chatbot,
-    langgraphRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_langgraph',
-    strandsRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_strands',
+    langgraphRuntimeArn,
+    strandsRuntimeArn,
   });
 
   chatbotAlbDnsName = fargate.albDnsName;
@@ -116,8 +121,8 @@ if (trafgenEnabled) {
     imageTag,
     apiUrl: api.api.url,
     chatbotUrl: `https://${ui.distribution.distributionDomainName}`,
-    langgraphRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_langgraph',
-    strandsRuntimeArn: 'arn:aws:bedrock-agentcore:us-east-1:PLACEHOLDER:runtime/cat_demo_strands',
+    langgraphRuntimeArn,
+    strandsRuntimeArn,
   });
 }
 
