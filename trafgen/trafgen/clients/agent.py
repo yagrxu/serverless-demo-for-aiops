@@ -126,7 +126,14 @@ class AgentClient:
         matching the chatbot BFF's invocation pattern. This ensures the
         AgentCore platform creates its segment and propagates trace context.
         """
+        import json as json_mod
+        import logging
+
+        logger = logging.getLogger(__name__)
+
         url = _arn_to_invoke_url(arn, self._region)
+        payload = json_mod.dumps(body).encode()
+
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
@@ -136,8 +143,6 @@ class AgentClient:
         t0 = time.perf_counter()
         try:
             # Build the request manually so we can sign it
-            import json as json_mod
-            payload = json_mod.dumps(body).encode()
             request = self._http.build_request("POST", url, headers=headers, content=payload)
 
             # Sign with SigV4
@@ -148,6 +153,14 @@ class AgentClient:
             # Send the signed request
             resp = await self._http.send(request)
             latency_ms = (time.perf_counter() - t0) * 1000
+
+            if resp.status_code >= 400:
+                err_body = resp.text
+                logger.error(
+                    "AgentCore invoke failed: status=%d body=%s url=%s",
+                    resp.status_code, err_body[:500], url,
+                )
+
             try:
                 json_body = resp.json()
             except Exception:
@@ -156,7 +169,7 @@ class AgentClient:
                 status=resp.status_code,
                 latency_ms=latency_ms,
                 json=json_body,
-                error=None,
+                error=f"http_{resp.status_code}" if resp.status_code >= 400 else None,
                 endpoint=endpoint,
                 method="POST",
             )
