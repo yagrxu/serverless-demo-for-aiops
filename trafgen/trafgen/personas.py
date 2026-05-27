@@ -26,8 +26,9 @@ class PersonaPool:
         self._personas: dict[str, Persona] = {}
         for spec in specs:
             # Deterministic session_id from persona id + seed
+            # AgentCore API requires minimum 33 chars for runtimeSessionId
             raw = f"{spec.id}:{seed}"
-            session_id = hashlib.sha256(raw.encode()).hexdigest()[:16]
+            session_id = hashlib.sha256(raw.encode()).hexdigest()[:36]
             self._personas[spec.id] = Persona(
                 persona_id=spec.id,
                 session_id=session_id,
