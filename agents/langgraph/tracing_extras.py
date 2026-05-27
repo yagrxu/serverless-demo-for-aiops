@@ -36,7 +36,6 @@ aws_ecs_fargate so the exporter assigns the correct origin.
 """
 
 import inspect
-import os
 
 from opentelemetry import trace
 from opentelemetry.context import Context
