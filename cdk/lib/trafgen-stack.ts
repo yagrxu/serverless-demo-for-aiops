@@ -121,10 +121,10 @@ export class TrafgenStack extends cdk.Stack {
         TRAFGEN_LANGGRAPH_ARN: props.langgraphRuntimeArn,
         TRAFGEN_STRANDS_ARN: props.strandsRuntimeArn,
         TRAFGEN_S3_BUCKET: manifestBucket.bucketName,
-        // OTel: point exporter to the ADOT sidecar (4317 = gRPC)
-        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4317',
-        // Force gRPC protocol to match the ADOT sidecar's OTLP receiver
-        OTEL_EXPORTER_OTLP_PROTOCOL: 'grpc',
+        // OTel: point exporter to the ADOT sidecar
+        OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
+        // Force HTTP/protobuf protocol (matches the exporter the distro loads)
+        OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
         OTEL_SERVICE_NAME: 'trafgen',
         OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test,cloud.platform=aws_ecs,cloud.provider=aws',
         // Use both W3C and X-Ray propagators so traceparent reaches
