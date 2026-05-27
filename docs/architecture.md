@@ -115,6 +115,7 @@ wired from `cdk/bin/app.ts`:
 | `FargateStack`       | `fargate-stack.ts`         | ECS Fargate + ALB hosting the Next.js chatbot BFF.            |
 | `ObservabilityStack` | `observability-stack.ts`   | Application Signals discovery, three persona dashboards (SRE / GenAI / Business), four saved Logs Insights queries, SNS alarm topic + 23 alarms (Phase 4), Contributor Insights enabled on `DeviceTelemetry` + `HealthMetrics`. |
 | `UiStack`            | `ui-stack.ts`              | CloudFront + S3 hosting the static UIs (device-sim, admin).   |
+| `TrafgenStack`       | `trafgen-stack.ts`         | ECS Fargate scheduled task for the traffic generator + ADOT sidecar. Gated behind `-c trafgenEnabled=true`. |
 
 Deployment order: `EcrStack` must exist before images are pushed, and
 images must be pushed before `AgentStack` is deployed. CI handles this
@@ -155,7 +156,7 @@ IAM permission only to the tables it touches.
 | `/devices/{id}/commands`          | POST   | device         | DeviceTelemetry (put)             |
 | `/devices/{id}/telemetry`         | POST   | device         | DeviceTelemetry (put)             |
 | `/feedings?cat_id=…`              | GET    | feeding        | FeedingEvents (query)             |
-| `/feedings`                       | POST   | feeding        | FeedingEvents (put)               |
+| `/feedings`                       | POST   | feeding        | FeedingEvents (put), HealthAlerts (put on limit violation) |
 | `/health/{cat_id}`                | GET    | health         | HealthMetrics (query)             |
 | `/health/{cat_id}/alerts`         | GET    | health         | HealthAlerts (query)              |
 
@@ -200,15 +201,17 @@ task-definition resources.
 | LangGraph    | ReAct agent using LangChain's `create_react_agent` with `ChatBedrockConverse`. |
 | Strands      | Model-driven agent using the Strands SDK `Agent` class with `BedrockModel`.    |
 
-Both agents use Claude Haiku 4.5 by default (`anthropic.claude-haiku-4-5-20251001-v1:0`),
-configurable via the `MODEL_ID` environment variable. The plain
-foundation-model id is used (rather than the `us.` cross-region inference
-profile) so that ADOT's `bedrock:CountTokens` calls — which populate
-`gen_ai.usage.*` span attributes — succeed; CountTokens does not accept
-inference-profile ids today. They share the same 9 API tools (cat
+Both agents use Claude Haiku 4.5 by default (`us.anthropic.claude-haiku-4-5-20251001-v1:0`),
+configurable via the `MODEL_ID` environment variable. The `us.` cross-region
+inference profile prefix is used so that requests route through the regional
+inference endpoint. They share the same 9 API tools (cat
 profiles, feedings, health, devices) and the same system prompt, but use
 different frameworks — giving AIOps investigators two distinct failure
 topologies to compare.
+
+**Prompt management.** Both agents load their system prompt from a
+`prompts.json` file via a shared `prompt_loader.py` module. This enables
+prompt versioning and hot-reload without code changes.
 
 Invocation flow (production):
 
@@ -335,9 +338,12 @@ flag changes.
 
 The Fargate runner is deployed by `TrafgenStack` (`cdk/lib/trafgen-stack.ts`)
 and gated behind `-c trafgenEnabled=true` so it doesn't affect existing
-deploys. It uses a 256 CPU / 512 MB ARM64 task definition, runs for 55
-minutes per hour, and writes manifests to an S3 bucket with 7-day
-lifecycle.
+deploys. It uses a 512 CPU / 1024 MB ARM64 task definition with an ADOT
+collector sidecar that receives OTel traces/metrics on `localhost:4317`
+and exports them to X-Ray and CloudWatch. This makes trafgen appear in
+the Application Signals Service Map alongside the agents and Lambdas.
+The task runs for 55 minutes per hour and writes manifests to an S3
+bucket with 7-day lifecycle.
 
 Every dispatched call carries a W3C `traceparent` header so backend
 telemetry (CloudWatch, Application Signals, X-Ray) can be filtered to
@@ -348,6 +354,52 @@ between generator activity and observed failures.
 See [`trafgen/README.md`](../trafgen/README.md) for install and usage,
 and [`.kiro/specs/traffic-generator/design.md`](../.kiro/specs/traffic-generator/design.md)
 for the full design.
+
+## Feeding limits
+
+The feeding Lambda (`cdk/lambda/feeding/handler.py`) enforces daily intake
+rules to prevent overfeeding:
+
+| Rule | Limit | Configurable via |
+|------|-------|------------------|
+| Daily total | 200g per cat per day | `DAILY_LIMIT_GRAMS` env var |
+| Wet food daily | 100g per cat per day | hardcoded |
+| Dry food daily | 150g per cat per day | hardcoded |
+| Minimum interval | 2 hours between feedings | hardcoded |
+
+Exceeding a limit returns HTTP 429 and creates a health alert
+(`type: feeding_limit`) on the cat. A new EMF metric
+`FeedingLimitViolations` fires on each violation.
+
+## Evaluation framework
+
+The `evaluation/` directory provides automated quality scoring for both
+agents using an LLM-as-judge approach:
+
+```
+evaluation/
+├── runner.py              # Sends prompts to both agents, records responses
+├── judge.py               # LLM-as-judge: scores responses via Bedrock Claude
+├── report.py              # Rich-formatted comparison tables
+├── ci-run.sh              # Full local stack + eval + judge (CI or local)
+├── datasets/
+│   └── comparative.yaml   # 14 test cases across 6 categories
+└── results/               # Output (gitignored)
+```
+
+**Scoring rules:**
+- Each response is scored 0.0–1.0 against category-specific criteria
+- Any single case below 0.7 → FAIL
+- Average score below 0.75 → FAIL
+
+**Categories tested:** efficiency, accuracy, error_recovery, ambiguity,
+context (multi-turn), safety.
+
+**CI integration:** The `agent-evaluation` job in `.github/workflows/pr-tests.yml`
+runs on PRs touching `agents/`, `evaluation/`, or `mcp-server/`. It starts
+the full local stack (DynamoDB Local + API + MCP Server + both agents),
+runs all test cases, and gates the PR on the judge verdict. Requires AWS
+OIDC credentials for Bedrock model access.
 
 ## Deployment pipeline
 

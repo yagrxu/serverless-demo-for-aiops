@@ -1,7 +1,9 @@
 """Agent client for the chatbot BFF, LangGraph, and Strands surfaces.
 
 Dispatches chat prompts via the chatbot BFF, or directly to LangGraph/Strands
-runtimes, with traceparent injection and optional SigV4 signing.
+runtimes. OTel context propagation is handled automatically by the
+opentelemetry-instrument httpx auto-instrumentation — no manual traceparent
+injection needed.
 """
 from __future__ import annotations
 
@@ -27,10 +29,6 @@ class AgentClient:
         self._strands_url = strands_url.rstrip("/") if strands_url else None
         self._http = httpx.AsyncClient(timeout=90.0)
 
-    def _headers(self, ctx: CallContext) -> dict[str, str]:
-        """Build headers with traceparent injection."""
-        return {"traceparent": ctx.traceparent, "Content-Type": "application/json"}
-
     async def _post(
         self,
         url: str,
@@ -38,8 +36,13 @@ class AgentClient:
         body: dict[str, Any],
         endpoint: str,
     ) -> Response:
-        """Execute a POST request with 90s timeout."""
-        headers = self._headers(ctx)
+        """Execute a POST request with 90s timeout.
+
+        NOTE: No manual traceparent header is set here. The OTel httpx
+        auto-instrumentation (via opentelemetry-instrument) injects the
+        correct traceparent from the active span context automatically.
+        """
+        headers = {"Content-Type": "application/json"}
         t0 = time.perf_counter()
         try:
             resp = await self._http.post(url, headers=headers, json=body)
@@ -100,7 +103,7 @@ class AgentClient:
         if not self._langgraph_url:
             return Response(error="langgraph_url not configured", endpoint="langgraph:/invocations", method="POST")
         url = f"{self._langgraph_url}/invocations"
-        body = {"message": prompt, "sessionId": ctx.session_id}
+        body = {"prompt": prompt, "sessionId": ctx.session_id}
         return await self._post(url, ctx, body, endpoint="langgraph:/invocations")
 
     async def invoke_strands(self, ctx: CallContext, prompt: str) -> Response:
@@ -108,7 +111,7 @@ class AgentClient:
         if not self._strands_url:
             return Response(error="strands_url not configured", endpoint="strands:/invocations", method="POST")
         url = f"{self._strands_url}/invocations"
-        body = {"message": prompt, "sessionId": ctx.session_id}
+        body = {"prompt": prompt, "sessionId": ctx.session_id}
         return await self._post(url, ctx, body, endpoint="strands:/invocations")
 
     async def close(self) -> None:

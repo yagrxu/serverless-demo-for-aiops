@@ -55,3 +55,25 @@ export AWS_PROFILE=<your-bedrock-profile>
 | 8082 | Strands agent | Host |
 | 8084 | Voice agent (Nova Sonic) | Host |
 | 3000 | All UIs (Next.js) | Host |
+
+## Agent evaluation
+
+Run the evaluation framework against the local stack to score both agents:
+
+```bash
+cd evaluation
+pip install -r requirements.txt
+
+# Collect responses only
+python runner.py --dataset datasets/comparative.yaml
+
+# Collect + LLM-as-judge (requires AWS credentials for Bedrock)
+python runner.py --dataset datasets/comparative.yaml --judge
+
+# Full CI-equivalent run (starts local stack, evaluates, judges)
+./evaluation/ci-run.sh --threshold 0.7
+```
+
+Results are saved to `evaluation/results/`. The judge scores each response
+against category-specific criteria and fails if any case scores below 0.7
+or the average drops below 0.75.

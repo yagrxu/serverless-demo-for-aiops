@@ -12,17 +12,37 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from opentelemetry import trace
+
 from .clients import CallContext, Response
 from .clients.agent import AgentClient
 from .clients.rest import RestClient
 from .config import Scenario, ScenarioStep
-from .observability import RunEvent, RunManifest, RunSummary, generate_traceparent
+from .observability import RunEvent, RunManifest, RunSummary
 from .personas import Persona, PersonaPool
 from .sampling import weighted_pick
 from .templates import TemplateError, resolve_templates, select_prompt
 from .tokenbucket import TokenBucket
 
 logger = logging.getLogger(__name__)
+
+_tracer = trace.get_tracer("trafgen.scheduler")
+
+
+def _current_traceparent() -> str:
+    """Extract the W3C traceparent from the current OTel span context.
+
+    Returns a valid traceparent string if a span is active, otherwise
+    a placeholder with trace_id=0.
+    """
+    span = trace.get_current_span()
+    ctx = span.get_span_context()
+    if ctx and ctx.trace_id and ctx.span_id:
+        trace_id = format(ctx.trace_id, "032x")
+        span_id = format(ctx.span_id, "016x")
+        flags = "01" if ctx.trace_flags else "00"
+        return f"00-{trace_id}-{span_id}-{flags}"
+    return "00-00000000000000000000000000000000-0000000000000000-00"
 
 
 async def dispatch(
@@ -40,21 +60,34 @@ async def dispatch(
     For agent: render prompt, call agent_client, emit one RunEvent.
     On first error in REST scenario, stop and emit error event.
     Never raises — catches all exceptions.
+
+    Creates an OTel span that becomes the parent for all downstream HTTP
+    calls. The httpx auto-instrumentation propagates this span's context
+    as the traceparent header, linking trafgen → agent → gateway → lambda.
     """
     try:
-        traceparent = generate_traceparent()
-        ctx = CallContext(
-            run_id=run_id,
-            scenario_id=scenario.id,
-            persona_id=persona.persona_id,
-            session_id=persona.session_id,
-            traceparent=traceparent,
-        )
+        with _tracer.start_as_current_span(
+            f"trafgen.dispatch.{scenario.id}",
+            attributes={
+                "trafgen.scenario_id": scenario.id,
+                "trafgen.persona_id": persona.persona_id,
+                "trafgen.surface": scenario.surface,
+                "trafgen.run_id": run_id,
+            },
+        ):
+            traceparent = _current_traceparent()
+            ctx = CallContext(
+                run_id=run_id,
+                scenario_id=scenario.id,
+                persona_id=persona.persona_id,
+                session_id=persona.session_id,
+                traceparent=traceparent,
+            )
 
-        if scenario.surface == "rest":
-            await _dispatch_rest(scenario, persona, rest_client, manifest, ctx, rng)
-        elif scenario.surface == "agent":
-            await _dispatch_agent(scenario, persona, agent_client, manifest, ctx, rng)
+            if scenario.surface == "rest":
+                await _dispatch_rest(scenario, persona, rest_client, manifest, ctx, rng)
+            elif scenario.surface == "agent":
+                await _dispatch_agent(scenario, persona, agent_client, manifest, ctx, rng)
     except Exception as e:
         # Never let exceptions escape dispatch
         logger.error(f"Unexpected error in dispatch: {e}", exc_info=True)
@@ -296,7 +329,7 @@ class Scheduler:
                         surface="rest",
                         endpoint="saturation_drop",
                         latency_ms=0.0,
-                        traceparent=generate_traceparent(),
+                        traceparent=_current_traceparent(),
                         saturation_drop=True,
                     )
                     self._manifest.write_event(ev)
@@ -321,7 +354,7 @@ class Scheduler:
                         surface=scenario.surface,
                         endpoint=f"dry_run:{scenario.id}",
                         latency_ms=0.0,
-                        traceparent=generate_traceparent(),
+                        traceparent=_current_traceparent(),
                         session_id=persona.session_id,
                     )
                     self._manifest.write_event(ev)

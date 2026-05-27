@@ -15,13 +15,13 @@ defaults:
 
 personas:
   - id: owner_alice
-    cat_ids: ["cat-001", "cat-002"]
-    device_ids: ["dev-001", "dev-002"]
+    cat_ids: ["hotpot", "bbq"]
+    device_ids: ["feeder-hotpot", "fountain-1"]
     locale: en-US
 
   - id: owner_bob
-    cat_ids: ["cat-003"]
-    device_ids: ["dev-003"]
+    cat_ids: ["bbq"]
+    device_ids: ["feeder-bbq", "tracker-bbq"]
     locale: en-US
 
   - id: anon_browser
@@ -113,10 +113,10 @@ scenarios:
     weight: 10
     allowed_personas: [owner_alice, owner_bob]
     prompts:
-      - "How is {cat_name} doing today?"
-      - "Show me the health status for {cat_name}"
-      - "Any alerts for {cat_name}?"
-      - "When was {cat_name} last fed?"
+      - "{cat_name}最近怎么样？"
+      - "查一下{cat_name}的健康状况"
+      - "{cat_name}有什么警报吗？"
+      - "{cat_name}最后一次吃东西是什么时候？"
 
   - id: chat_device_check
     surface: agent
@@ -124,9 +124,9 @@ scenarios:
     weight: 5
     allowed_personas: [owner_alice, owner_bob]
     prompts:
-      - "What devices are registered?"
-      - "Show me device status"
-      - "Is the feeder online?"
+      - "我的设备都正常吗？"
+      - "列出所有设备"
+      - "喂食器在线吗？"
 
   - id: chat_anonymous_browse
     surface: agent
@@ -134,6 +134,26 @@ scenarios:
     weight: 5
     allowed_personas: [anon_browser]
     prompts:
-      - "List all cats"
-      - "What can you help me with?"
-      - "Show me recent feedings"
+      - "有哪些猫？"
+      - "你能帮我做什么？"
+      - "最近的喂食记录"
+
+  - id: direct_langgraph_health
+    surface: agent
+    via: langgraph_direct
+    weight: 5
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}今天吃了多少？"
+      - "给我{cat_name}的健康报告"
+      - "{cat_name}的体重变化如何？"
+
+  - id: direct_strands_health
+    surface: agent
+    via: strands_direct
+    weight: 5
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}今天吃了多少？"
+      - "给我{cat_name}的健康报告"
+      - "{cat_name}的体重变化如何？"

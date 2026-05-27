@@ -1,7 +1,7 @@
 """REST client for the cat-care API surface.
 
 Issues HTTP calls (get_cat, list_cats, create_cat, list_feedings, create_feeding,
-get_health, get_alerts, post_telemetry, post_command) with traceparent injection
+get_health, get_alerts, post_telemetry, post_command) with OTel context propagation
 and optional SigV4 signing.
 """
 from __future__ import annotations
@@ -26,10 +26,6 @@ class RestClient:
         self._auth = auth
         self._http = httpx.AsyncClient(timeout=30.0)
 
-    def _headers(self, ctx: CallContext) -> dict[str, str]:
-        """Build headers with traceparent injection."""
-        return {"traceparent": ctx.traceparent}
-
     async def _request(
         self,
         method: str,
@@ -39,9 +35,13 @@ class RestClient:
         json: Any = None,
         params: dict[str, Any] | None = None,
     ) -> Response:
-        """Execute an HTTP request and return a normalized Response."""
+        """Execute an HTTP request and return a normalized Response.
+
+        NOTE: No manual traceparent header is set here. The OTel httpx
+        auto-instrumentation (via opentelemetry-instrument) injects the
+        correct traceparent from the active span context automatically.
+        """
         url = f"{self._base_url}{path}"
-        headers = self._headers(ctx)
         endpoint = f"{method.upper()} {path}"
 
         t0 = time.perf_counter()
@@ -49,7 +49,6 @@ class RestClient:
             resp = await self._http.request(
                 method=method,
                 url=url,
-                headers=headers,
                 json=json,
                 params=params,
             )

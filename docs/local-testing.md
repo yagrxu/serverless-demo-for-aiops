@@ -258,6 +258,28 @@ Prerequisites: the local stack must be running (`./local/scripts/up.sh`).
 The generator will emit connection errors if the API shim is not
 reachable on `:8000`.
 
+## Agent evaluation
+
+Run the evaluation framework against the local stack to score both agents
+with an LLM-as-judge:
+
+```bash
+cd evaluation
+pip install -r requirements.txt
+
+# Collect responses + judge in one command
+python runner.py --dataset datasets/comparative.yaml --judge
+
+# With CI-style fail gate
+python runner.py --dataset datasets/comparative.yaml --judge --fail-on-regression
+
+# Or use the all-in-one script (starts local stack for you)
+./evaluation/ci-run.sh
+```
+
+The judge requires AWS credentials with Bedrock `InvokeModel` access
+(same as the agents). Results are saved to `evaluation/results/`.
+
 ## Troubleshooting
 
 **`api` container logs `KeyError: 'CAT_PROFILES_TABLE'`** — compose
@@ -274,9 +296,8 @@ credentials configured. Set `AWS_PROFILE` or export `AWS_ACCESS_KEY_ID`
 **Agent logs `AccessDeniedException: bedrock:InvokeModel`** — your AWS
 profile doesn't have Bedrock model access in us-east-1, or the specific
 model isn't enabled in the console. Model access is per-region and
-per-account. Default model is `anthropic.claude-haiku-4-5-20251001-v1:0`
-(plain foundation id, not the `us.` cross-region inference profile —
-ADOT's `bedrock:CountTokens` rejects inference-profile ids).
+per-account. Default model is `us.anthropic.claude-haiku-4-5-20251001-v1:0`
+(cross-region inference profile).
 
 **UI shows CORS error** — the API shim adds `Access-Control-Allow-Origin: *`
 and compose publishes port `:8000`. Check that `curl http://localhost:8000/cats`

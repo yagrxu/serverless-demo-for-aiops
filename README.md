@@ -42,6 +42,7 @@ agents/
   langgraph/              # ReAct agent using LangChain + LangGraph
   strands/                # Model-driven agent using Strands SDK
 trafgen/                  # Traffic generator — produces realistic load for AIOps baseline
+evaluation/               # Agent evaluation framework — LLM-as-judge scoring for CI
 mcp-server/               # MCP Server — local equivalent of AgentCore Gateway
 ui/
   chatbot/                # Split-screen comparison of LangGraph vs Strands
@@ -186,7 +187,7 @@ POST /devices/{id}/commands
 POST /devices/{id}/telemetry
 
 GET  /feedings?cat_id=<id>
-POST /feedings
+POST /feedings              (enforces daily limits: 200g/cat, wet 100g, dry 150g, 2h interval)
 
 GET  /health/{cat_id}
 GET  /health/{cat_id}/alerts
@@ -217,6 +218,31 @@ In production, AgentCore Gateway (`gateway-stack.ts`) translates MCP
 tool calls directly into Lambda invocations. Locally, the MCP Server
 (`mcp-server/`) mirrors the same pattern. Both agents use Claude Haiku
 4.5 by default. Override with `MODEL_ID`.
+
+## Evaluation framework
+
+The `evaluation/` directory provides automated quality checks for both agents:
+
+```bash
+cd evaluation
+pip install -r requirements.txt
+
+# Collect responses from both agents
+python runner.py --dataset datasets/comparative.yaml
+
+# Collect + LLM-as-judge scoring in one command
+python runner.py --dataset datasets/comparative.yaml --judge --fail-on-regression
+```
+
+The judge uses Bedrock Claude to score each response against category-specific
+criteria (accuracy, safety, ambiguity handling, context retention, etc.).
+Scoring rules: any single case below 0.7 = FAIL, average below 0.75 = FAIL.
+
+In CI, the `agent-evaluation` job in `pr-tests.yml` runs automatically on PRs
+that touch `agents/`, `evaluation/`, or `mcp-server/`. It starts the full local
+stack, runs all test cases, and gates the PR on the judge verdict.
+
+See [`evaluation/README.md`](./evaluation/README.md) for full details.
 
 ## How to investigate a bug injected on a feature/* branch
 
