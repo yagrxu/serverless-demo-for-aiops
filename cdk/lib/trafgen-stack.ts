@@ -96,6 +96,12 @@ export class TrafgenStack extends cdk.Stack {
       resources: ['*'],
     }));
 
+    // Allow trafgen to invoke AgentCore Runtimes directly
+    taskRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['bedrock-agentcore:InvokeAgentRuntime'],
+      resources: ['*'],
+    }));
+
     // --- Task Definition ---
     const taskDef = new ecs.FargateTaskDefinition(this, 'TrafgenTaskDef', {
       cpu: 512,
