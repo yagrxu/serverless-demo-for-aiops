@@ -118,7 +118,7 @@ export class TrafgenStack extends cdk.Stack {
         // OTel: point exporter to the ADOT sidecar
         OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4317',
         OTEL_SERVICE_NAME: 'trafgen',
-        OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test',
+        OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test,cloud.platform=aws_ecs,cloud.provider=aws',
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'trafgen',

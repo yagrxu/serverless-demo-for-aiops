@@ -26,6 +26,13 @@ Three startup modes are supported:
 The `add_span_processor` probe prevents the double-provider registration
 that broke the previous setup: we only construct a provider in Mode 3,
 where none exists.
+
+Additionally, when running inside AgentCore Runtime, the platform sets
+cloud.platform=aws_bedrock_agentcore which the X-Ray exporter does not
+recognize (it only maps aws_ecs, aws_eks, aws_ec2, etc. to an origin).
+This causes the container's SERVER span to appear as a duplicate
+gear-icon node in the Service Map. We patch the Resource to use
+aws_ecs_fargate so the exporter assigns the correct origin.
 """
 
 import inspect
@@ -33,6 +40,30 @@ import inspect
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
+
+
+def _patch_resource_for_xray_origin(provider) -> None:
+    """Patch the provider's Resource so X-Ray exporter assigns a known origin.
+
+    AgentCore Runtime sets cloud.platform=aws_bedrock_agentcore which the
+    X-Ray collector exporter's determineAwsOrigin() does not recognize,
+    resulting in an empty origin and a duplicate gear-icon node in the
+    Service Map.
+
+    We replace it with aws_ecs_fargate (the actual underlying infra) so
+    the exporter maps it to AWS::ECS::Fargate. This only runs when we
+    detect we're inside AgentCore (cloud.platform == aws_bedrock_agentcore).
+
+    For local dev, this is a no-op.
+    """
+    from opentelemetry.sdk.resources import Resource
+
+    resource = provider.resource
+    attrs = dict(resource.attributes)
+    if attrs.get("cloud.platform") == "aws_bedrock_agentcore":
+        attrs["cloud.platform"] = "aws_ecs_fargate"
+        new_resource = Resource(attrs, resource.schema_url)
+        provider._resource = new_resource
 
 
 class CodeMetadataSpanProcessor(SpanProcessor):
@@ -73,6 +104,7 @@ if hasattr(_provider, "add_span_processor"):
     # Mode 1 or 2: opentelemetry-instrument has already set up the
     # provider. Strands (installed with [otel]) will discover it. Attach
     # only our metadata processor.
+    _patch_resource_for_xray_origin(_provider)
     _provider.add_span_processor(CodeMetadataSpanProcessor())
 else:
     # Mode 3: plain `uvicorn server:app` with no wrapper. Use Strands'
