@@ -675,6 +675,7 @@ Four `QueryDefinition` resources under the prefix `aiops-cat-demo/`:
 | API Gateway metrics          | CloudWatch, including per-method latency / 4xx / 5xx.                |
 | Application Signals discovery| `ObservabilityStack` owns a single account/region `CfnDiscovery` so the Service Map populates. Required exactly once per account+region. |
 | AgentCore runtime logs       | CloudWatch (auto-provisioned by the service).                        |
+| AgentCore Runtime traces     | X-Ray via CloudWatch Logs delivery (TRACES → XRAY) wired in `AgentStack`. Without this, AgentCore accepts the inbound `traceparent` but never publishes its own data-plane segment, so caller spans (chatbot/trafgen) and the runtime container's server span land in the same `trace_id` as two disconnected branches in the Service Map. Requires Transaction Search enabled. |
 | AgentCore Gateway traces     | X-Ray via CloudWatch Logs delivery (TRACES → XRAY); requires Transaction Search enabled (one-time per account, see CICD.md). |
 | GenAI usage attributes       | ADOT's botocore patch calls `bedrock:CountTokens` around `InvokeModel`/`Converse` to populate `gen_ai.usage.input_tokens`/`output_tokens` on agent spans. The AgentCore execution role grants `bedrock:CountTokens`; the foundation-model id is used (not the cross-region `us.` inference profile) because CountTokens rejects inference-profile ids. |
 | CloudFront access logs       | Off by default — enable per investigation if needed.                 |
