@@ -91,6 +91,55 @@ export class AgentStack extends cdk.Stack {
     this.langgraphRuntimeArn = cdk.Token.asString(lgRuntime.getAtt('AgentRuntimeArn'));
     this.strandsRuntimeArn = cdk.Token.asString(strandsRuntime.getAtt('AgentRuntimeArn'));
 
+    // --- Tracing: deliver runtime spans to X-Ray ---
+    //
+    // AgentCore Runtime, like Gateway, has no `TracingEnabled` property.
+    // Tracing is wired through the generic CloudWatch Logs delivery
+    // model: a DeliverySource(LogType=TRACES) on the runtime ARN paired
+    // with a DeliveryDestination of type XRAY.
+    //
+    // Without this delivery, AgentCore accepts the inbound traceparent
+    // but never publishes its own data-plane segment, so trafgen's
+    // httpx CLIENT span and the customer container's SERVER span end
+    // up in the same trace_id but as two disconnected branches in the
+    // X-Ray Service Map.
+    //
+    // Prerequisite (one-time, per account/region):
+    //   aws xray update-trace-segment-destination --destination CloudWatchLogs
+    // (already enabled — see gateway-stack.ts for the same rationale).
+    const tracesDestination = new cdk.CfnResource(this, 'RuntimeTracesDestination', {
+      type: 'AWS::Logs::DeliveryDestination',
+      properties: {
+        Name: 'cat-demo-runtime-traces-xray',
+        DeliveryDestinationType: 'XRAY',
+      },
+    });
+
+    const wireTraces = (idPrefix: string, runtime: cdk.CfnResource, sourceName: string) => {
+      const source = new cdk.CfnResource(this, `${idPrefix}TracesSource`, {
+        type: 'AWS::Logs::DeliverySource',
+        properties: {
+          Name: sourceName,
+          LogType: 'TRACES',
+          ResourceArn: runtime.getAtt('AgentRuntimeArn'),
+        },
+      });
+      source.addDependency(runtime);
+
+      const delivery = new cdk.CfnResource(this, `${idPrefix}TracesDelivery`, {
+        type: 'AWS::Logs::Delivery',
+        properties: {
+          DeliverySourceName: source.ref,
+          DeliveryDestinationArn: tracesDestination.getAtt('Arn'),
+        },
+      });
+      delivery.addDependency(source);
+      delivery.addDependency(tracesDestination);
+    };
+
+    wireTraces('LangGraphRuntime', lgRuntime, 'cat-demo-langgraph-runtime-traces');
+    wireTraces('StrandsRuntime', strandsRuntime, 'cat-demo-strands-runtime-traces');
+
     new cdk.CfnOutput(this, 'LangGraphRuntimeArn', { value: this.langgraphRuntimeArn });
     new cdk.CfnOutput(this, 'StrandsRuntimeArn', { value: this.strandsRuntimeArn });
   }
