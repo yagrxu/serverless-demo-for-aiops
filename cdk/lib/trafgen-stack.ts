@@ -125,6 +125,12 @@ export class TrafgenStack extends cdk.Stack {
         OTEL_EXPORTER_OTLP_ENDPOINT: 'http://localhost:4318',
         // Force HTTP/protobuf protocol (matches the exporter the distro loads)
         OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+        // Activate AWS distro instead of community OTel distro.
+        // Without these, telemetry.auto.version is 0.61b0 (community) and
+        // CLIENT spans don't get aws.local.service annotation, causing them
+        // to appear as "UnknownService" nodes in the X-Ray Service Map.
+        OTEL_PYTHON_DISTRO: 'aws_distro',
+        OTEL_PYTHON_CONFIGURATOR: 'aws_configurator',
         OTEL_SERVICE_NAME: 'trafgen',
         OTEL_RESOURCE_ATTRIBUTES: 'service.name=trafgen,deployment.environment=test,cloud.platform=aws_ecs,cloud.provider=aws',
         // Use both W3C and X-Ray propagators so traceparent reaches
