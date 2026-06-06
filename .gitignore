@@ -54,3 +54,12 @@ todo/
 .cursor/
 .kiro/
 .agents/
+
+# Slack integration local secrets (never commit — store in Secrets Manager)
+slack/**/*.secret
+slack/**/secrets.json
+slack/**/.secrets/
+slack/tests/.local-config.json
+
+# Hypothesis (pytest property-testing cache)
+.hypothesis/

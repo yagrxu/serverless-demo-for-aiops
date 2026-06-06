@@ -12,15 +12,10 @@
     "experimentalDecorators": true,
     "inlineSourceMap": true,
     "inlineSources": true,
-    "baseUrl": ".",
-    "paths": {
-      "aws-cdk-lib": ["./node_modules/aws-cdk-lib"],
-      "aws-cdk-lib/*": ["./node_modules/aws-cdk-lib/*"],
-      "constructs": ["./node_modules/constructs"],
-      "constructs/*": ["./node_modules/constructs/*"]
-    },
+    "outDir": "./dist",
+    "rootDir": ".",
     "typeRoots": ["./node_modules/@types"]
   },
-  "include": ["bin/**/*.ts", "lib/**/*.ts", "test/**/*.ts", "../slack/cdk/lib/**/*.ts"],
-  "exclude": ["node_modules", "cdk.out"]
+  "include": ["lib/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
 }

@@ -1,0 +1,223 @@
+"""Slack Handler Lambda (Path B, ack phase).
+
+Receives Slack events from API Gateway, verifies authenticity, and
+acknowledges within Slack's 3-second deadline. Because the full DevOps Agent
+round-trip is ~18.7s (well over Slack's limit), this Lambda does NOT call the
+agent inline — it fast-acks and fire-and-forget invokes the Worker Lambda
+(InvocationType='Event').
+
+Routing:
+  - url_verification    -> echo challenge (sync)
+  - bot message         -> ignore, 200
+  - empty/whitespace    -> usage hint, 200 (no worker)
+  - real question       -> async-invoke worker, 200
+"""
+
+import base64
+import hashlib
+import hmac
+import json
+import logging
+import os
+import re
+import time
+from urllib.parse import parse_qs
+
+import boto3
+import urllib3
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+SECRET_NAME = os.environ.get("SLACK_SECRET_NAME", "aiops-cat-demo/slack-bot")
+WORKER_FUNCTION_NAME = os.environ.get("WORKER_FUNCTION_NAME", "")
+MAX_QUESTION_LENGTH = 4000
+TIMESTAMP_MAX_AGE_SECONDS = 5 * 60
+SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
+
+_cached_secret: dict | None = None
+_lambda_client = None
+_http = urllib3.PoolManager()
+
+
+def get_secret() -> dict:
+    global _cached_secret
+    if _cached_secret is not None:
+        return _cached_secret
+    client = boto3.client("secretsmanager")
+    resp = client.get_secret_value(SecretId=SECRET_NAME)
+    _cached_secret = json.loads(resp["SecretString"])
+    return _cached_secret
+
+
+def _lambda():
+    global _lambda_client
+    if _lambda_client is None:
+        _lambda_client = boto3.client("lambda")
+    return _lambda_client
+
+
+# ---------------------------------------------------------------------------
+# Signature verification (Slack's own scheme: hex, v0= prefix)
+# ---------------------------------------------------------------------------
+
+
+def verify_slack_signature(
+    body: str, timestamp: str, signature: str, signing_secret: str
+) -> bool:
+    """Verify X-Slack-Signature (HMAC-SHA256 hex, 'v0=' prefix).
+
+    Rejects requests older than 5 minutes (replay protection).
+    """
+    try:
+        ts = int(timestamp)
+    except (ValueError, TypeError):
+        logger.warning("Invalid Slack timestamp")
+        return False
+    if abs(time.time() - ts) > TIMESTAMP_MAX_AGE_SECONDS:
+        logger.warning("Slack timestamp too old")
+        return False
+
+    basestring = f"v0:{timestamp}:{body}"
+    computed = "v0=" + hmac.new(
+        signing_secret.encode("utf-8"),
+        basestring.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(computed, signature)
+
+
+# ---------------------------------------------------------------------------
+# Event helpers
+# ---------------------------------------------------------------------------
+
+
+def is_bot_event(event: dict) -> bool:
+    return "bot_id" in event
+
+
+def extract_user_text(event: dict) -> str:
+    """Strip the bot mention (<@BOTID>) and truncate to the question limit."""
+    text = event.get("text", "")
+    text = re.sub(r"<@[A-Z0-9]+>", "", text).strip()
+    return truncate(text)
+
+
+def truncate(text: str, limit: int = MAX_QUESTION_LENGTH) -> str:
+    return text[:limit] if len(text) > limit else text
+
+
+def handle_url_verification(body: dict) -> dict:
+    return _resp(200, json.dumps({"challenge": body["challenge"]}))
+
+
+# ---------------------------------------------------------------------------
+# Responses + async dispatch
+# ---------------------------------------------------------------------------
+
+
+def _resp(status: int, body: str = "") -> dict:
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": body,
+    }
+
+
+def post_usage_hint(channel: str, bot_token: str) -> None:
+    _http.request(
+        "POST",
+        SLACK_POST_URL,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {bot_token}",
+        },
+        body=json.dumps(
+            {
+                "channel": channel,
+                "text": "Ask me about your infrastructure, e.g. "
+                "`@DevOps how many investigations are open?` "
+                "or `/devops investigate FeedingFn latency`.",
+            }
+        ).encode("utf-8"),
+    )
+
+
+def dispatch_worker(question: str, channel_id: str, user_id: str) -> None:
+    """Fire-and-forget invoke of the Worker Lambda (async)."""
+    _lambda().invoke(
+        FunctionName=WORKER_FUNCTION_NAME,
+        InvocationType="Event",
+        Payload=json.dumps(
+            {"question": question, "channel_id": channel_id, "user_id": user_id}
+        ).encode("utf-8"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lambda handler
+# ---------------------------------------------------------------------------
+
+
+def _parse_body(raw_body: str, content_type: str) -> dict:
+    if "application/json" in content_type:
+        return json.loads(raw_body)
+    if "application/x-www-form-urlencoded" in content_type:
+        return {k: v[0] for k, v in parse_qs(raw_body).items()}
+    try:
+        return json.loads(raw_body)
+    except (json.JSONDecodeError, TypeError):
+        return {k: v[0] for k, v in parse_qs(raw_body).items()}
+
+
+def lambda_handler(event: dict, context) -> dict:
+    headers = {k.lower(): v for k, v in (event.get("headers") or {}).items()}
+    raw_body = event.get("body", "") or ""
+    if event.get("isBase64Encoded"):
+        raw_body = base64.b64decode(raw_body).decode("utf-8")
+
+    secret = get_secret()
+    signing_secret = secret["signing_secret"]
+    bot_token = secret["bot_token"]
+
+    # Verify signature
+    timestamp = headers.get("x-slack-request-timestamp", "")
+    signature = headers.get("x-slack-signature", "")
+    if not verify_slack_signature(raw_body, timestamp, signature, signing_secret):
+        logger.warning("Slack signature verification failed")
+        return _resp(401, "Invalid signature")
+
+    content_type = headers.get("content-type", "")
+    body = _parse_body(raw_body, content_type)
+
+    # URL verification handshake
+    if body.get("type") == "url_verification":
+        return handle_url_verification(body)
+
+    # Slash command
+    if "command" in body:
+        channel_id = body.get("channel_id", "")
+        user_id = body.get("user_id", "")
+        text = (body.get("text", "") or "").strip()
+        if not text:
+            post_usage_hint(channel_id, bot_token)
+            return _resp(200)
+        dispatch_worker(truncate(text), channel_id, user_id)
+        return _resp(200)
+
+    # Event callback (app_mention)
+    if body.get("type") == "event_callback":
+        inner = body.get("event", {})
+        if is_bot_event(inner):
+            return _resp(200)
+        if inner.get("type") == "app_mention":
+            channel_id = inner.get("channel", "")
+            user_id = inner.get("user", "")
+            text = extract_user_text(inner)
+            if not text.strip():
+                post_usage_hint(channel_id, bot_token)
+                return _resp(200)
+            dispatch_worker(text, channel_id, user_id)
+            return _resp(200)
+
+    return _resp(200)
