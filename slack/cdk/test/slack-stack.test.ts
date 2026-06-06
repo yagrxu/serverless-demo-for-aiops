@@ -88,7 +88,7 @@ describe('SlackStack', () => {
             Match.objectLike({
               Action: 'secretsmanager:GetSecretValue',
               Effect: 'Allow',
-              Resource: props.webhookSecretArn,
+              Resource: `${props.webhookSecretArn}*`,
             }),
           ]),
         },
@@ -102,7 +102,7 @@ describe('SlackStack', () => {
             Match.objectLike({
               Action: 'secretsmanager:GetSecretValue',
               Effect: 'Allow',
-              Resource: props.slackSecretArn,
+              Resource: `${props.slackSecretArn}*`,
             }),
           ]),
         },
