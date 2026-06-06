@@ -75,7 +75,7 @@ export class SlackStack extends cdk.Stack {
     });
     webhookLambda.addToRolePolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
-      resources: [props.webhookSecretArn],
+      resources: [`${props.webhookSecretArn}*`],
     }));
 
     // ---------------------------------------------------------------
@@ -99,7 +99,7 @@ export class SlackStack extends cdk.Stack {
     // Read the Slack secret.
     workerRole.addToPolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
-      resources: [props.slackSecretArn],
+      resources: [`${props.slackSecretArn}*`],
     }));
     // Assume the DevOps Agent operator role WITH session tagging (AgentSpaceId).
     workerRole.addToPolicy(new iam.PolicyStatement({
@@ -165,7 +165,7 @@ export class SlackStack extends cdk.Stack {
     });
     slackHandlerLambda.addToRolePolicy(new iam.PolicyStatement({
       actions: ['secretsmanager:GetSecretValue'],
-      resources: [props.slackSecretArn],
+      resources: [`${props.slackSecretArn}*`],
     }));
     // Allow the ack Lambda to fire-and-forget invoke the worker.
     slackWorkerLambda.grantInvoke(slackHandlerLambda);
