@@ -248,6 +248,10 @@ jobs:
         working-directory: cdk
         run: npm ci
 
+      - name: Install Slack CDK dependencies
+        working-directory: slack/cdk
+        run: npm ci
+
       - name: Build CDK
         working-directory: cdk
         run: npm run build
