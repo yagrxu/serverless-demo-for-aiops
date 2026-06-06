@@ -177,3 +177,65 @@ class TestLambdaHandler:
             result = lambda_handler(event, None)
 
         assert result["statusCode"] == 200
+
+    def test_app_mention_posts_placeholder_before_dispatch(self):
+        signing_secret = "test_secret"
+        body = json.dumps({
+            "type": "event_callback",
+            "event": {"type": "app_mention", "text": "<@U123> what is wrong?", "channel": "C1", "user": "U1"},
+        })
+        event = self._make_event(body, signing_secret)
+
+        mock_secrets = {
+            "signing_secret": signing_secret,
+            "bot_token": "xoxb-fake",
+        }
+
+        mock_placeholder_resp = MagicMock()
+        mock_placeholder_resp.status = 200
+        mock_placeholder_resp.data = json.dumps({"ok": True, "ts": "111.222"}).encode()
+
+        call_order = []
+
+        def track_http(*args, **kwargs):
+            call_order.append("http")
+            return mock_placeholder_resp
+
+        def track_dispatch(*args, **kwargs):
+            call_order.append("dispatch")
+
+        with patch.object(_sh_module, "get_secret", return_value=mock_secrets), \
+             patch.object(_sh_module, "_http", MagicMock(request=track_http)), \
+             patch.object(_sh_module, "_lambda", return_value=MagicMock(invoke=track_dispatch)):
+            result = lambda_handler(event, None)
+
+        assert result["statusCode"] == 200
+        assert call_order == ["http", "dispatch"]
+
+    def test_dispatch_includes_message_ts(self):
+        signing_secret = "test_secret"
+        body = json.dumps({
+            "type": "event_callback",
+            "event": {"type": "app_mention", "text": "<@U123> check errors", "channel": "C1", "user": "U1"},
+        })
+        event = self._make_event(body, signing_secret)
+
+        mock_secrets = {
+            "signing_secret": signing_secret,
+            "bot_token": "xoxb-fake",
+        }
+
+        mock_placeholder_resp = MagicMock()
+        mock_placeholder_resp.status = 200
+        mock_placeholder_resp.data = json.dumps({"ok": True, "ts": "123.456"}).encode()
+
+        mock_lambda = MagicMock()
+
+        with patch.object(_sh_module, "get_secret", return_value=mock_secrets), \
+             patch.object(_sh_module, "_http", MagicMock(request=MagicMock(return_value=mock_placeholder_resp))), \
+             patch.object(_sh_module, "_lambda", return_value=mock_lambda):
+            lambda_handler(event, None)
+
+        invoke_call = mock_lambda.invoke.call_args
+        payload = json.loads(invoke_call[1]["Payload"] if "Payload" in invoke_call[1] else invoke_call.kwargs["Payload"])
+        assert payload["message_ts"] == "123.456"
