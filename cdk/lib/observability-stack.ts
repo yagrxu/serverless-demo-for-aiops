@@ -74,6 +74,9 @@ export class ObservabilityStack extends cdk.Stack {
    */
   public readonly alarms: cloudwatch.IAlarm[] = [];
 
+  /** ARN of the SNS alarm topic (consumed by the Slack integration stack). */
+  public readonly alarmTopicArn: string;
+
   // Held so phase 4 can attach alarms to the existing dashboard rather
   // than recreate it.
   public readonly sreDashboard: cloudwatch.Dashboard;
@@ -559,6 +562,9 @@ export class ObservabilityStack extends cdk.Stack {
     if (props.alarmEmail) {
       alarmTopic.addSubscription(new sns_subs.EmailSubscription(props.alarmEmail));
     }
+
+    // Expose the topic ARN for cross-stack references (e.g. Slack integration).
+    this.alarmTopicArn = alarmTopic.topicArn;
 
     const snsAction = new cloudwatch_actions.SnsAction(alarmTopic);
     const projectName = props.projectName;

@@ -117,6 +117,7 @@ jobs:
       strands:    ${{ steps.filter.outputs.strands }}
       mcp_server: ${{ steps.filter.outputs.mcp_server }}
       trafgen:    ${{ steps.filter.outputs.trafgen }}
+      slack:      ${{ steps.filter.outputs.slack }}
       first_run:  ${{ steps.firstrun.outputs.first_run }}
       force_all:  ${{ steps.firstrun.outputs.force_all }}
     steps:
@@ -175,6 +176,10 @@ jobs:
               - 'mcp-server/**'
             trafgen:
               - 'trafgen/**'
+            slack:
+              - 'slack/lambda/**'
+              - 'slack/cdk/**'
+              - 'cdk/bin/app.ts'
 
   deploy:
     name: CDK Deploy (${{ needs.resolve.outputs.environment }})
@@ -194,6 +199,7 @@ jobs:
       CHG_LANGGRAPH: ${{ needs.changes.outputs.langgraph }}
       CHG_STRANDS:  ${{ needs.changes.outputs.strands }}
       CHG_TRAFGEN:  ${{ needs.changes.outputs.trafgen }}
+      CHG_SLACK:    ${{ needs.changes.outputs.slack }}
 
     steps:
       - name: Checkout
@@ -236,10 +242,14 @@ jobs:
         run: |
           echo "first_run=$FIRST_RUN  force_all=$FORCE_ALL"
           echo "cdk=$CHG_CDK  lambda=$CHG_LAMBDA  chatbot=$CHG_CHATBOT"
-          echo "langgraph=$CHG_LANGGRAPH  strands=$CHG_STRANDS"
+          echo "langgraph=$CHG_LANGGRAPH  strands=$CHG_STRANDS  slack=$CHG_SLACK"
 
       - name: Install CDK dependencies
         working-directory: cdk
+        run: npm ci
+
+      - name: Install Slack CDK dependencies
+        working-directory: slack/cdk
         run: npm ci
 
       - name: Build CDK
@@ -382,4 +392,45 @@ jobs:
             ${PROJECT_NAME}-trafgen \
             --require-approval never \
             -c imageTag=${{ github.sha }} \
+            -c trafgenEnabled=true
+
+      # ===================================================================
+      # Phase 5: Deploy Slack integration stack.
+      # Requires the deployment ID from SSM (created once by
+      # slack/scripts/ensure-deployment-id.sh) and the operator role trust
+      # policy to have been configured (slack/scripts/update-operator-trust.sh).
+      # Both are one-time prerequisites done before first CI run.
+      # ===================================================================
+      - name: "Phase 5: Read Slack deployment ID from SSM"
+        if: >-
+          env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' ||
+          env.CHG_CDK == 'true' || env.CHG_SLACK == 'true'
+        id: slack_id
+        run: |
+          DEPLOY_ID=$(aws ssm get-parameter \
+            --name "/aiops-cat-demo/slack/deployment-id" \
+            --query 'Parameter.Value' --output text \
+            --region "$AWS_REGION" 2>/dev/null || echo "")
+          if [ -z "$DEPLOY_ID" ] || [ "$DEPLOY_ID" = "None" ]; then
+            echo ">> Slack deployment ID not found in SSM — skipping Slack stack."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo ">> Slack deployment ID: $DEPLOY_ID"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "deploy_id=$DEPLOY_ID" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: "Phase 5: Deploy Slack stack"
+        if: >-
+          (env.FIRST_RUN == 'true' || env.FORCE_ALL == 'true' ||
+          env.CHG_CDK == 'true' || env.CHG_SLACK == 'true') &&
+          steps.slack_id.outputs.skip != 'true'
+        working-directory: cdk
+        run: |
+          npx cdk deploy \
+            ${PROJECT_NAME}-slack \
+            --require-approval never \
+            -c imageTag=${{ github.sha }} \
+            -c slackEnabled=true \
+            -c slackDeploymentId=${{ steps.slack_id.outputs.deploy_id }} \
             -c trafgenEnabled=true

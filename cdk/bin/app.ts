@@ -11,6 +11,7 @@ import { UiStack } from '../lib/ui-stack';
 import { FargateStack } from '../lib/fargate-stack';
 import { ObservabilityStack } from '../lib/observability-stack';
 import { TrafgenStack } from '../lib/trafgen-stack';
+import { SlackStack } from '../../slack/cdk/lib/slack-stack';
 import { defaultConfig } from '../lib/config';
 
 const app = new cdk.App();
@@ -126,7 +127,7 @@ if (trafgenEnabled) {
   });
 }
 
-new ObservabilityStack(app, `${cfg.projectName}-observability`, {
+const observability = new ObservabilityStack(app, `${cfg.projectName}-observability`, {
   env,
   projectName: cfg.projectName,
   alarmEmail: cfg.alarmEmail,
@@ -148,6 +149,31 @@ new ObservabilityStack(app, `${cfg.projectName}-observability`, {
   apiAccessLogGroup: api.accessLogGroup,
   cloudfrontDistribution: ui.distribution,
 });
+
+// --- Slack Integration (optional) ---
+// Only construct when `-c slackEnabled=true` is passed so existing
+// deploys aren't affected (secrets must be pre-provisioned first).
+const slackEnabled = app.node.tryGetContext('slackEnabled') === 'true';
+if (slackEnabled) {
+  // The Slack Worker role name is suffixed with a random per-deployment id
+  // stored in SSM (slack/scripts/ensure-deployment-id.sh). Pass it via context:
+  //   -c slackDeploymentId=$(slack/scripts/ensure-deployment-id.sh --profile cloudops-demo)
+  const slackDeploymentId = (app.node.tryGetContext('slackDeploymentId') as string) || 'dev';
+
+  const slack = new SlackStack(app, `${cfg.projectName}-slack`, {
+    env,
+    projectName: cfg.projectName,
+    alarmTopicArn: observability.alarmTopicArn,
+    webhookSecretArn: (app.node.tryGetContext('webhookSecretArn') as string)
+      || `arn:aws:secretsmanager:us-east-1:${env.account}:secret:aiops-cat-demo/devops-agent-webhook`,
+    slackSecretArn: (app.node.tryGetContext('slackSecretArn') as string)
+      || `arn:aws:secretsmanager:us-east-1:${env.account}:secret:aiops-cat-demo/slack-bot`,
+    operatorRoleArn: (app.node.tryGetContext('operatorRoleArn') as string)
+      || `arn:aws:iam::${env.account}:role/service-role/DevOpsAgentRole-WebappAdmin-ajf59et7`,
+    deploymentId: slackDeploymentId,
+  });
+  slack.addDependency(observability);
+}
 
 // --- cdk-nag: Infrastructure Static Checks ---
 // Apply AWS Solutions rule pack when nagEnabled context flag is set.
