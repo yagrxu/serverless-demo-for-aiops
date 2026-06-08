@@ -143,14 +143,44 @@ def post_usage_hint(channel: str, bot_token: str) -> None:
     )
 
 
-def dispatch_worker(question: str, channel_id: str, user_id: str) -> None:
+def post_placeholder(channel: str, bot_token: str) -> str | None:
+    """Post an 'Investigating...' placeholder and return its message ts."""
+    resp = _http.request(
+        "POST",
+        SLACK_POST_URL,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Authorization": f"Bearer {bot_token}",
+        },
+        body=json.dumps(
+            {"channel": channel, "text": ":mag: Investigating..."}
+        ).encode("utf-8"),
+    )
+    if resp.status != 200:
+        logger.warning("Failed to post placeholder: status=%d", resp.status)
+        return None
+    data = json.loads(resp.data)
+    if not data.get("ok"):
+        logger.warning("Placeholder post returned ok=false: %s", data.get("error"))
+        return None
+    return data.get("ts")
+
+
+def dispatch_worker(
+    question: str, channel_id: str, user_id: str, message_ts: str | None = None
+) -> None:
     """Fire-and-forget invoke of the Worker Lambda (async)."""
+    payload = {
+        "question": question,
+        "channel_id": channel_id,
+        "user_id": user_id,
+    }
+    if message_ts:
+        payload["message_ts"] = message_ts
     _lambda().invoke(
         FunctionName=WORKER_FUNCTION_NAME,
         InvocationType="Event",
-        Payload=json.dumps(
-            {"question": question, "channel_id": channel_id, "user_id": user_id}
-        ).encode("utf-8"),
+        Payload=json.dumps(payload).encode("utf-8"),
     )
 
 
@@ -202,7 +232,8 @@ def lambda_handler(event: dict, context) -> dict:
         if not text:
             post_usage_hint(channel_id, bot_token)
             return _resp(200)
-        dispatch_worker(truncate(text), channel_id, user_id)
+        message_ts = post_placeholder(channel_id, bot_token)
+        dispatch_worker(truncate(text), channel_id, user_id, message_ts)
         return _resp(200)
 
     # Event callback (app_mention)
@@ -217,7 +248,8 @@ def lambda_handler(event: dict, context) -> dict:
             if not text.strip():
                 post_usage_hint(channel_id, bot_token)
                 return _resp(200)
-            dispatch_worker(text, channel_id, user_id)
+            message_ts = post_placeholder(channel_id, bot_token)
+            dispatch_worker(text, channel_id, user_id, message_ts)
             return _resp(200)
 
     return _resp(200)

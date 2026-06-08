@@ -209,7 +209,7 @@ def test_agent_failure_posts_error_message(channel_id):
 
     posted = []
 
-    def record_post(channel, text, bot_token):
+    def record_post(channel, text, bot_token, message_ts=None):
         posted.append((channel, text, bot_token))
 
     with (
@@ -297,7 +297,7 @@ def test_lambda_handler_happy_path_posts_answer():
     with (
         patch.object(handler, "get_secret", return_value=secret),
         patch.object(handler, "ask_devops_agent", return_value=answer) as mock_ask,
-        patch.object(handler, "post_to_slack", side_effect=lambda c, t, b: posted.append((c, t, b))),
+        patch.object(handler, "post_to_slack", side_effect=lambda c, t, b, ts=None: posted.append((c, t, b, ts))),
     ):
         result = handler.lambda_handler(event, None)
 
@@ -306,3 +306,77 @@ def test_lambda_handler_happy_path_posts_answer():
     assert len(posted) == 1
     assert posted[0][0] == "C12345"
     assert posted[0][1] == answer
+    assert posted[0][3] is None
+
+
+def test_lambda_handler_passes_message_ts_to_post():
+    """When message_ts is in the event, it's passed through to post_to_slack."""
+    event = {"question": "check errors", "channel_id": "C99", "user_id": "U1", "message_ts": "111.222"}
+    secret = {"bot_token": "xoxb-test", "agent_space_id": "space", "operator_role_arn": "arn"}
+    answer = "No errors found."
+
+    posted = []
+
+    with (
+        patch.object(handler, "get_secret", return_value=secret),
+        patch.object(handler, "ask_devops_agent", return_value=answer),
+        patch.object(handler, "post_to_slack", side_effect=lambda c, t, b, ts=None: posted.append((c, t, b, ts))),
+    ):
+        result = handler.lambda_handler(event, None)
+
+    assert result["statusCode"] == 200
+    assert posted[0][3] == "111.222"
+
+
+def test_lambda_handler_error_updates_placeholder():
+    """On failure with message_ts, the error is posted via chat.update (same ts)."""
+    event = {"question": "broken", "channel_id": "C99", "user_id": "U1", "message_ts": "333.444"}
+    secret = {"bot_token": "xoxb-test", "agent_space_id": "space", "operator_role_arn": "arn"}
+
+    posted = []
+
+    with (
+        patch.object(handler, "get_secret", return_value=secret),
+        patch.object(handler, "ask_devops_agent", side_effect=RuntimeError("agent down")),
+        patch.object(handler, "post_to_slack", side_effect=lambda c, t, b, ts=None: posted.append((c, t, b, ts))),
+    ):
+        result = handler.lambda_handler(event, None)
+
+    assert result["statusCode"] == 500
+    assert posted[0][3] == "333.444"
+    assert "could not be completed" in posted[0][1]
+
+
+def test_post_to_slack_uses_chat_update_when_ts_provided():
+    """post_to_slack calls chat.update URL when message_ts is given."""
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.data = b'{"ok": true}'
+
+    mock_http = MagicMock()
+    mock_http.request.return_value = mock_resp
+
+    with patch.object(handler, "_http", mock_http):
+        handler.post_to_slack("C1", "answer", "xoxb-test", "999.888")
+
+    call_args = mock_http.request.call_args
+    assert "chat.update" in call_args[0][1]
+    import json
+    body = json.loads(call_args[1]["body"] if "body" in call_args[1] else call_args.kwargs["body"])
+    assert body["ts"] == "999.888"
+
+
+def test_post_to_slack_uses_post_message_when_no_ts():
+    """post_to_slack calls chat.postMessage when message_ts is None."""
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.data = b'{"ok": true}'
+
+    mock_http = MagicMock()
+    mock_http.request.return_value = mock_resp
+
+    with patch.object(handler, "_http", mock_http):
+        handler.post_to_slack("C1", "answer", "xoxb-test", None)
+
+    call_args = mock_http.request.call_args
+    assert "chat.postMessage" in call_args[0][1]

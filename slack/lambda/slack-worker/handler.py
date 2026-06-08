@@ -31,6 +31,7 @@ SECRET_NAME = os.environ.get("SLACK_SECRET_NAME", "aiops-cat-demo/slack-bot")
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_MESSAGE_LENGTH = 4000
 SLACK_POST_URL = "https://slack.com/api/chat.postMessage"
+SLACK_UPDATE_URL = "https://slack.com/api/chat.update"
 INVESTIGATION_CONSOLE_BASE = (
     "https://console.aws.amazon.com/devops-agent/home?region="
     + REGION
@@ -134,25 +135,40 @@ def truncate_message(text: str, limit: int = MAX_MESSAGE_LENGTH) -> str:
     return text[:limit] if len(text) > limit else text
 
 
-def post_to_slack(channel: str, text: str, bot_token: str) -> None:
-    """Post a message to a Slack channel via chat.postMessage."""
+def post_to_slack(
+    channel: str, text: str, bot_token: str, message_ts: str | None = None
+) -> None:
+    """Post or update a Slack message.
+
+    If message_ts is provided, updates the existing placeholder message via
+    chat.update. Otherwise falls back to chat.postMessage.
+    """
+    truncated = truncate_message(text)
+    if message_ts:
+        url = SLACK_UPDATE_URL
+        body = {"channel": channel, "ts": message_ts, "text": truncated}
+    else:
+        url = SLACK_POST_URL
+        body = {"channel": channel, "text": truncated}
+
     resp = _http.request(
         "POST",
-        SLACK_POST_URL,
+        url,
         headers={
             "Content-Type": "application/json; charset=utf-8",
             "Authorization": f"Bearer {bot_token}",
         },
-        body=json.dumps(
-            {"channel": channel, "text": truncate_message(text)}
-        ).encode("utf-8"),
+        body=json.dumps(body).encode("utf-8"),
     )
     if resp.status != 200:
-        logger.error("Slack post failed: status=%d", resp.status)
+        logger.error("Slack post/update failed: status=%d", resp.status)
         return
     payload = json.loads(resp.data)
     if not payload.get("ok"):
-        logger.error("Slack post returned ok=false: %s", payload.get("error"))
+        logger.error("Slack returned ok=false: %s", payload.get("error"))
+        if message_ts:
+            logger.info("Falling back to chat.postMessage")
+            post_to_slack(channel, text, bot_token, None)
 
 
 def ask_devops_agent(question: str, secret: dict) -> str:
@@ -173,15 +189,16 @@ def ask_devops_agent(question: str, secret: dict) -> str:
 
 
 def lambda_handler(event: dict, context) -> dict:
-    """Async entry point. event = {question, channel_id, user_id}."""
+    """Async entry point. event = {question, channel_id, user_id, message_ts?}."""
     question = event.get("question", "")
     channel_id = event.get("channel_id", "")
+    message_ts = event.get("message_ts")
     secret = get_secret()
     bot_token = secret["bot_token"]
 
     try:
         answer = ask_devops_agent(question, secret)
-        post_to_slack(channel_id, answer, bot_token)
+        post_to_slack(channel_id, answer, bot_token, message_ts)
         return {"statusCode": 200}
     except Exception as e:  # noqa: BLE001 — surface any failure to the user
         logger.error("Worker failed: %s", str(e))
@@ -190,5 +207,6 @@ def lambda_handler(event: dict, context) -> dict:
             ":warning: Sorry, the investigation could not be completed. "
             "Please try again in a moment.",
             bot_token,
+            message_ts,
         )
         return {"statusCode": 500}
