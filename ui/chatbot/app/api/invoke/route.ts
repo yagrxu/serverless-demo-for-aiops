@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server';
-import { invokeAgent, getAppConfig } from '@/lib/agent-client';
+import { invokeAgent, getAppConfig, InvokeOptions } from '@/lib/agent-client';
 
 interface InvokeRequest {
   message: string;
   agent: 'langgraph' | 'strands' | 'both';
+  model_id?: string | null;
+  prompt_version?: number | null;
 }
 
 interface InvokeResponse {
@@ -34,7 +36,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { message, agent } = body as Partial<InvokeRequest>;
+  const { message, agent, model_id, prompt_version } = body as Partial<InvokeRequest>;
 
   if (!message || typeof message !== 'string' || message.trim() === '') {
     return NextResponse.json({ error: 'message is required' }, { status: 400 });
@@ -47,12 +49,16 @@ export async function POST(request: Request) {
   }
 
   const config = getAppConfig();
+  const options: InvokeOptions = {};
+  if (model_id) options.model_id = model_id;
+  if (prompt_version != null) options.prompt_version = prompt_version;
+
   const response: InvokeResponse = {};
   const promises: Promise<void>[] = [];
 
   if (agent === 'langgraph' || agent === 'both') {
     promises.push(
-      invokeAgent('langgraph', message, config, sessionId)
+      invokeAgent('langgraph', message, config, sessionId, options)
         .then(text => { response.langgraph = text; })
         .catch(err => { response.langgraph = `Error: ${err.message}`; })
     );
@@ -60,7 +66,7 @@ export async function POST(request: Request) {
 
   if (agent === 'strands' || agent === 'both') {
     promises.push(
-      invokeAgent('strands', message, config, sessionId)
+      invokeAgent('strands', message, config, sessionId, options)
         .then(text => { response.strands = text; })
         .catch(err => { response.strands = `Error: ${err.message}`; })
     );
