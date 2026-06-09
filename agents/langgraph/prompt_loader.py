@@ -23,6 +23,10 @@ except ImportError:
         def shutdown(self): pass
         def force_flush(self, timeout_millis=None): pass
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 PROMPT_SOURCE = os.environ.get("PROMPT_SOURCE", "local")  # "local" or "ssm"
 SSM_PREFIX = os.environ.get("SSM_PROMPT_PREFIX", "/aiops-cat-demo/prompts")
 SSM_TTL_SECONDS = int(os.environ.get("SSM_PROMPT_TTL", "300"))
@@ -215,6 +219,9 @@ def get_prompt(name: str, session_id: str = "", version: int | None = None) -> s
     if not prompt_text:
         prompt_text, ver_label = _get_prompt_local(name, session_id, version)
         _active.set((prompt_text[:500], ver_label))
+        logger.warning("prompt_loader: fallback to local file for '%s' → %s", name, ver_label)
+    else:
+        logger.info("prompt_loader: loaded '%s' → %s (source=%s)", name, ver_label, PROMPT_SOURCE)
 
     return prompt_text
 
