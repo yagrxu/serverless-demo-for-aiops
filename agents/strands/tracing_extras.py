@@ -40,6 +40,7 @@ import inspect
 from opentelemetry import trace
 from opentelemetry.context import Context
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor
+from prompt_loader import OmniPromptProcessor
 
 
 def _patch_resource_for_xray_origin(provider) -> None:
@@ -97,6 +98,7 @@ if hasattr(_provider, "add_span_processor"):
     # only our metadata processor.
     _patch_resource_for_xray_origin(_provider)
     _provider.add_span_processor(CodeMetadataSpanProcessor())
+    _provider.add_span_processor(OmniPromptProcessor())
 else:
     # Mode 3: plain `uvicorn server:app` with no wrapper. Use Strands'
     # built-in telemetry helper to set up the provider + exporter so
@@ -107,6 +109,7 @@ else:
         telemetry = StrandsTelemetry()
         telemetry.setup_otlp_exporter()
         telemetry.tracer_provider.add_span_processor(CodeMetadataSpanProcessor())
+        telemetry.tracer_provider.add_span_processor(OmniPromptProcessor())
     except ImportError:
         # strands installed without [otel] extras. Fall back to a plain
         # SDK provider so our own metadata processor still works on any
@@ -120,4 +123,5 @@ else:
         provider = TracerProvider()
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
         provider.add_span_processor(CodeMetadataSpanProcessor())
+        provider.add_span_processor(OmniPromptProcessor())
         trace.set_tracer_provider(provider)

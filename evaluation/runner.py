@@ -46,9 +46,12 @@ async def call_agent(
     url: str,
     prompt: str,
     session_id: str,
+    model_id: str | None = None,
 ) -> dict:
     """Send a prompt to an agent and record response + timing."""
     payload = {"prompt": prompt, "sessionId": session_id}
+    if model_id:
+        payload["model_id"] = model_id
     start = time.perf_counter()
     try:
         resp = await client.post(url, json=payload, timeout=TIMEOUT_SECONDS)
@@ -287,6 +290,91 @@ async def run_evaluation(
     }
 
 
+async def run_model_comparison(
+    dataset_path: str,
+    langgraph_url: str,
+    strands_url: str,
+    models: list[str],
+) -> dict:
+    """Run evaluation across multiple models for comparison."""
+    with open(dataset_path) as f:
+        dataset = yaml.safe_load(f)
+
+    cases = dataset.get("evaluations", [])
+    print(f"Loaded {len(cases)} evaluation cases from {dataset_path}")
+    print(f"  Models: {', '.join(models)}")
+    print(f"  LangGraph: {langgraph_url}")
+    print(f"  Strands:   {strands_url}")
+    print()
+
+    model_results = {}
+    for model_id in models:
+        short_name = model_id.split(":")[0].split(".")[-1]
+        print(f"\n{'='*60}")
+        print(f"  Model: {short_name} ({model_id})")
+        print(f"{'='*60}\n")
+
+        results = []
+        async with httpx.AsyncClient() as client:
+            for i, case in enumerate(cases, 1):
+                case_id = case.get("id", f"case_{i}")
+                is_multi_turn = "turns" in case
+
+                print(
+                    f"  [{i}/{len(cases)}] {case_id}...",
+                    end=" ",
+                    flush=True,
+                )
+
+                if is_multi_turn:
+                    session_id = f"eval-{case_id}-{uuid.uuid4().hex[:8]}"
+                    turns_results = {"langgraph": [], "strands": []}
+                    for turn in case["turns"]:
+                        lg_r, st_r = await asyncio.gather(
+                            call_agent(client, langgraph_url, turn["prompt"], session_id, model_id),
+                            call_agent(client, strands_url, turn["prompt"], session_id, model_id),
+                        )
+                        turns_results["langgraph"].append({"prompt": turn["prompt"], **lg_r})
+                        turns_results["strands"].append({"prompt": turn["prompt"], **st_r})
+                    results.append({
+                        "id": case_id,
+                        "category": case.get("category", "unknown"),
+                        "type": "multi_turn",
+                        "langgraph": turns_results["langgraph"],
+                        "strands": turns_results["strands"],
+                    })
+                    print("done")
+                else:
+                    session_id = f"eval-{case_id}-{uuid.uuid4().hex[:8]}"
+                    lg_r, st_r = await asyncio.gather(
+                        call_agent(client, langgraph_url, case["prompt"], session_id, model_id),
+                        call_agent(client, strands_url, case["prompt"], session_id, model_id),
+                    )
+                    results.append({
+                        "id": case_id,
+                        "category": case.get("category", "unknown"),
+                        "type": "single_turn",
+                        "prompt": case["prompt"],
+                        "langgraph": lg_r,
+                        "strands": st_r,
+                    })
+                    print(f"LG={lg_r['status']} ST={st_r['status']}")
+
+        model_results[model_id] = results
+
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "mode": "model_comparison",
+        "config": {
+            "dataset": dataset_path,
+            "models": models,
+            "langgraph_url": langgraph_url,
+            "strands_url": strands_url,
+        },
+        "model_results": model_results,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run comparative evaluation of LangGraph vs Strands agents"
@@ -305,6 +393,12 @@ def main():
         "--strands-url",
         default=DEFAULT_STRANDS_URL,
         help=f"Strands agent URL (default: {DEFAULT_STRANDS_URL})",
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=None,
+        help="Model IDs to compare (sends model_id in payload for dynamic switching)",
     )
     parser.add_argument(
         "--output",
@@ -335,9 +429,14 @@ def main():
     args = parser.parse_args()
 
     # Run evaluation
-    output = asyncio.run(
-        run_evaluation(args.dataset, args.langgraph_url, args.strands_url)
-    )
+    if args.models:
+        output = asyncio.run(
+            run_model_comparison(args.dataset, args.langgraph_url, args.strands_url, args.models)
+        )
+    else:
+        output = asyncio.run(
+            run_evaluation(args.dataset, args.langgraph_url, args.strands_url)
+        )
 
     # Determine output path
     if args.output:

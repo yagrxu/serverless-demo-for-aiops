@@ -65,16 +65,20 @@ def _build_mcp_connection_config() -> dict:
     return config
 
 
-async def _build_agent_with_tools():
+async def _build_agent_with_tools(model_id: str | None = None):
     """Build a fresh MCP client + tools + ReAct agent inside the request.
 
     ``langchain-mcp-adapters`` opens a new MCP session for every tool call
     using the closure captured at ``get_tools`` time, so building per-request
     keeps every Gateway POST under the active trace.
     """
+    llm = _llm
+    if model_id and model_id != MODEL_ID:
+        llm = ChatBedrockConverse(model=model_id, region_name=AWS_REGION)
+
     client = MultiServerMCPClient({"cat-care": _build_mcp_connection_config()})
     tools = await client.get_tools()
-    return create_react_agent(model=_llm, tools=tools, prompt=get_prompt("cat_care_assistant"))
+    return create_react_agent(model=llm, tools=tools, prompt=get_prompt("cat_care_assistant"))
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +99,7 @@ class Invocation(BaseModel):
     messages: list = []
     sessionId: str = ""
     input: dict | None = None
+    model_id: str | None = None
 
 
 @app.get("/ping")
@@ -117,7 +122,7 @@ async def invocations(payload: Invocation):
         user_content = f"[Context: current cat_id is '{cat_id}']\n{message}"
 
     try:
-        agent = await _build_agent_with_tools()
+        agent = await _build_agent_with_tools(model_id=payload.model_id)
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": user_content}]},
         )

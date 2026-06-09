@@ -29,6 +29,7 @@ from strands.models.bedrock import BedrockModel
 from strands.tools.mcp import MCPClient
 
 from streamable_http_sigv4 import streamablehttp_client_with_sigv4
+from prompt_loader import get_prompt
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -38,14 +39,7 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-SYSTEM_PROMPT = (
-    "You are a helpful cat-care assistant. You help users manage their cats' "
-    "feeding schedules, health monitoring, and IoT devices (feeders, fountains, "
-    "trackers). Use the available tools to look up real data before answering. "
-    "Be concise and friendly.\n\n"
-    "Most tools require a cat_id, not a cat name. When the user refers to a cat "
-    "by name or nickname, resolve it to a cat_id first before calling other tools."
-)
+SYSTEM_PROMPT = get_prompt("cat_care_assistant")
 
 # ---------------------------------------------------------------------------
 # Reusable model — model construction is cheap and stateless, so it stays
@@ -106,6 +100,7 @@ class Invocation(BaseModel):
     input: dict | None = None
     messages: list = []
     sessionId: str = ""
+    model_id: str | None = None
 
 
 @app.get("/ping")
@@ -113,7 +108,7 @@ def ping():
     return {"status": "ok"}
 
 
-def _run_agent(user_content: str) -> str:
+def _run_agent(user_content: str, model_id: str | None = None) -> str:
     """Build a fresh MCPClient + Agent inside the calling thread, run one
     invocation, then tear down. Done synchronously so MCPClient.start()
     captures the OTel context active in this thread (the request task
@@ -134,9 +129,13 @@ def _run_agent(user_content: str) -> str:
         print(f"[WARN] MCP server at {MCP_SERVER_URL} is unreachable. Running agent without tools.")
         mcp_client = None
 
+    effective_model = _model
+    if model_id and model_id != MODEL_ID:
+        effective_model = BedrockModel(model_id=model_id, region_name=AWS_REGION)
+
     try:
         agent = Agent(
-            model=_model,
+            model=effective_model,
             system_prompt=SYSTEM_PROMPT,
             tools=tools,
         )
@@ -167,7 +166,7 @@ async def invocations(payload: Invocation):
         # asyncio.to_thread copies contextvars (PEP 567) including the
         # OTel context, so MCPClient.start() in the worker thread sees
         # the runtime's server span as the active parent.
-        result = await asyncio.to_thread(_run_agent, user_content)
+        result = await asyncio.to_thread(_run_agent, user_content, payload.model_id)
         return {"agent": "strands", "response": result}
     except Exception:
         import traceback
