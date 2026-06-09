@@ -118,16 +118,35 @@ def _run_agent(user_content: str) -> str:
     invocation, then tear down. Done synchronously so MCPClient.start()
     captures the OTel context active in this thread (the request task
     that the runtime's server span has activated).
+
+    If the MCP server is unreachable, falls back to running the agent
+    without tools so it can still answer questions using the model.
     """
-    mcp_client = _create_mcp_client()
-    with mcp_client:
+    tools = []
+    mcp_client = None
+    try:
+        mcp_client = _create_mcp_client()
+        mcp_client.start()
         tools = mcp_client.list_tools_sync()
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        print(f"[WARN] MCP server at {MCP_SERVER_URL} is unreachable. Running agent without tools.")
+        mcp_client = None
+
+    try:
         agent = Agent(
             model=_model,
             system_prompt=SYSTEM_PROMPT,
             tools=tools,
         )
         return str(agent(user_content))
+    finally:
+        if mcp_client is not None:
+            try:
+                mcp_client.stop()
+            except Exception:
+                pass
 
 
 @app.post("/invocations")
