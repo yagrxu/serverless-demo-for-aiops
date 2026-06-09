@@ -39,7 +39,7 @@ MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
-SYSTEM_PROMPT = get_prompt("cat_care_assistant")
+PROMPT_NAME = "cat_care_assistant"
 
 # ---------------------------------------------------------------------------
 # Reusable model — model construction is cheap and stateless, so it stays
@@ -101,6 +101,7 @@ class Invocation(BaseModel):
     messages: list = []
     sessionId: str = ""
     model_id: str | None = None
+    prompt_version: int | None = None
 
 
 @app.get("/ping")
@@ -108,7 +109,12 @@ def ping():
     return {"status": "ok"}
 
 
-def _run_agent(user_content: str, model_id: str | None = None) -> str:
+def _run_agent(
+    user_content: str,
+    model_id: str | None = None,
+    session_id: str = "",
+    prompt_version: int | None = None,
+) -> str:
     """Build a fresh MCPClient + Agent inside the calling thread, run one
     invocation, then tear down. Done synchronously so MCPClient.start()
     captures the OTel context active in this thread (the request task
@@ -133,10 +139,12 @@ def _run_agent(user_content: str, model_id: str | None = None) -> str:
     if model_id and model_id != MODEL_ID:
         effective_model = BedrockModel(model_id=model_id, region_name=AWS_REGION)
 
+    system_prompt = get_prompt(PROMPT_NAME, session_id=session_id, version=prompt_version)
+
     try:
         agent = Agent(
             model=effective_model,
-            system_prompt=SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             tools=tools,
         )
         return str(agent(user_content))
@@ -166,7 +174,9 @@ async def invocations(payload: Invocation):
         # asyncio.to_thread copies contextvars (PEP 567) including the
         # OTel context, so MCPClient.start() in the worker thread sees
         # the runtime's server span as the active parent.
-        result = await asyncio.to_thread(_run_agent, user_content, payload.model_id)
+        result = await asyncio.to_thread(
+            _run_agent, user_content, payload.model_id, payload.sessionId, payload.prompt_version
+        )
         return {"agent": "strands", "response": result}
     except Exception:
         import traceback

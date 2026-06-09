@@ -69,138 +69,235 @@ Prompts hardcoded in source (`SYSTEM_PROMPT = "..."`) create several issues:
 - Can't roll back a bad prompt without rolling back the entire deploy
 - Evaluations can't pin a specific prompt version for reproducibility
 
-### Design: Prompts as Versioned Configuration
+### Design: Manifest + Versioned Parameters
+
+Two SSM parameters per agent — a **manifest** (routing) and a **prompt** (content):
 
 ```
-prompts/
-├── strands/
-│   └── system.yaml          # Prompt source of truth
-├── langgraph/
-│   └── system.yaml
-└── voice/
-    └── system.yaml
+/aiops-cat-demo/prompts/strands/manifest   → routing config (JSON)
+/aiops-cat-demo/prompts/strands/system     → prompt text (versioned by SSM)
 ```
 
-**Prompt file format:**
+The manifest controls which prompt versions are active:
 
-```yaml
-name: strands-system-prompt
-version: 3
-description: Cat-care assistant system prompt for strands agent
-model_hint: us.anthropic.claude-haiku-4-5-20251001-v1:0
-
-prompt: |
-  You are a helpful cat-care assistant. You help users manage their cats'
-  feeding schedules, health monitoring, and IoT devices (feeders, fountains,
-  trackers). Use the available tools to look up real data before answering.
-  Be concise and friendly.
-
-  Most tools require a cat_id, not a cat name. When the user refers to a cat
-  by name or nickname, resolve it to a cat_id first before calling other tools.
+```json
+{
+  "stable": 2,
+  "canary": {"version": 3, "weight": 20},
+  "previous": 1
+}
 ```
 
-### Storage & Delivery
+- **`stable`** — production default (serves 100% - canary_weight of traffic)
+- **`canary`** — new version under test (serves canary_weight % of traffic)
+- **`previous`** — last known-good for instant rollback
 
-| Environment | Storage | How agent loads |
-|-------------|---------|-----------------|
-| Local dev | File on disk (`prompts/strands/system.yaml`) | Agent reads at startup |
-| Test/Prod | AWS Systems Manager Parameter Store or S3 | Agent reads at startup + periodic refresh (5 min TTL) |
+The prompt parameter stores content, with SSM providing automatic version history:
 
-**Why SSM Parameter Store:**
-- Built-in versioning (every `put-parameter` creates a new version)
-- IAM-controlled access (agent role can read, deploy role can write)
-- No extra infra (already in every account)
-- Supports up to 8KB Advanced parameters (prompts rarely exceed this)
-- CloudTrail audit trail on every change
-
-**Parameter path convention:**
 ```
-/aiops-cat-demo/prompts/strands/system     → current prompt text
-/aiops-cat-demo/prompts/langgraph/system   → current prompt text
+Version 1: "You are a helpful cat-care assistant..."
+Version 2: "You are a helpful cat-care assistant... (improved tool instructions)"
+Version 3: "You are a helpful cat-care assistant... (canary experiment)"
 ```
 
-### Agent Code Change
+### How the Agent Loads Prompts
 
-Current (hardcoded):
 ```python
-SYSTEM_PROMPT = "You are a helpful cat-care assistant..."
+def get_prompt(name: str, session_id: str = "") -> tuple[str, str]:
+    """Returns (prompt_text, version_label) based on manifest routing."""
+    manifest = _load_manifest(name)  # cached, 5-min TTL
+
+    # Determine which version to serve
+    canary = manifest.get("canary")
+    if canary and _in_canary_cohort(session_id, canary["weight"]):
+        version = canary["version"]
+        label = f"v{version}-canary"
+    else:
+        version = manifest["stable"]
+        label = f"v{version}-stable"
+
+    prompt_text = _load_prompt_version(name, version)  # cached per version
+    return prompt_text, label
+
+
+def _in_canary_cohort(session_id: str, weight: int) -> bool:
+    """Deterministic: same session always gets same version."""
+    return (hash(session_id) % 100) < weight
 ```
 
-New (loaded from config):
+Key properties:
+- **Session-pinned**: same user/session always gets the same version (consistent UX)
+- **Deterministic**: no randomness — hash-based routing is reproducible
+- **Version in spans**: OTel traces tag `llm.prompt_template.version = "v3-canary"` for quality metric slicing
+
+### Storage Tiers
+
+| Environment | Manifest Source | Prompt Source |
+|-------------|----------------|---------------|
+| Local dev | `prompts.json` file (Omni-compatible) | `prompts.json` versions array |
+| Test/Prod | SSM `/prompts/<agent>/manifest` | SSM `/prompts/<agent>/system` (by version number) |
+
+The loader tries SSM first, falls back to local file:
+
 ```python
-from prompt_loader import load_prompt
-
-SYSTEM_PROMPT = load_prompt("strands", "system")
+PROMPT_SOURCE = os.environ.get("PROMPT_SOURCE", "local")  # "local" or "ssm"
 ```
 
-The `prompt_loader` module:
-1. On cold start: reads from SSM (or local file if `PROMPT_SOURCE=local`)
-2. Caches in memory with 5-min TTL
-3. Falls back to a bundled default if SSM is unreachable (resilience)
+### Operational Workflows
+
+**Deploy new canary (one SSM put):**
+```bash
+# 1. Create new prompt version
+aws ssm put-parameter \
+  --name /aiops-cat-demo/prompts/strands/system \
+  --value "new prompt text..." --overwrite
+# → auto-creates version 4
+
+# 2. Update manifest to route 20% to it
+aws ssm put-parameter \
+  --name /aiops-cat-demo/prompts/strands/manifest \
+  --value '{"stable": 3, "canary": {"version": 4, "weight": 20}, "previous": 2}' \
+  --overwrite
+```
+
+**Promote canary to stable (one SSM put):**
+```bash
+aws ssm put-parameter \
+  --name /aiops-cat-demo/prompts/strands/manifest \
+  --value '{"stable": 4, "canary": null, "previous": 3}' \
+  --overwrite
+```
+
+**Rollback (one SSM put):**
+```bash
+aws ssm put-parameter \
+  --name /aiops-cat-demo/prompts/strands/manifest \
+  --value '{"stable": 3, "canary": null, "previous": 2}' \
+  --overwrite
+```
+
+**Emergency kill canary (one SSM put):**
+```bash
+aws ssm put-parameter \
+  --name /aiops-cat-demo/prompts/strands/manifest \
+  --value '{"stable": 3, "canary": null, "previous": 2}' \
+  --overwrite
+```
+
+All operations are **single atomic writes** to the manifest. No label gymnastics. Agent picks up changes within 5-min TTL (or immediately on next cold start).
+
+### Canary Quality Monitoring
+
+Because OTel spans carry the version label, production scoring can slice by version:
+
+```
+CW Metric: AgentQuality/Correctness {prompt_version="v4-canary"}  → 72%
+CW Metric: AgentQuality/Correctness {prompt_version="v3-stable"}  → 88%
+```
+
+If canary quality drops below stable by >10%, the DevOps agent can auto-kill the canary:
+1. Detect quality divergence between versions
+2. Update manifest to remove canary
+3. Alert to Slack: "Canary v4 killed — correctness 72% vs stable 88%"
 
 ### CI/CD Integration
 
 ```
-Developer edits prompts/strands/system.yaml
+Developer edits prompts/strands/system.yaml in repo
         │
         ▼
 ┌───────────────────────────────────────────────────┐
 │  PR CI Pipeline                                    │
 │  1. Lint prompt (non-empty, < 8KB, valid YAML)    │
 │  2. Run offline eval with NEW prompt              │
-│  3. Compare scores vs baseline (old prompt)       │
+│  3. Compare scores vs baseline (current stable)   │
 │  4. Block if correctness regresses > 5%           │
 └───────────────────────────────────────────────────┘
         │ (merge)
         ▼
 ┌───────────────────────────────────────────────────┐
 │  Deploy Pipeline                                   │
-│  1. Upload prompt to SSM Parameter Store          │
-│     (creates new version automatically)           │
-│  2. Agent picks up new prompt within 5 min        │
-│     (or: trigger immediate refresh via signal)    │
+│  1. Upload prompt to SSM (creates new version)    │
+│  2. Update manifest: new version as canary (20%)  │
+│  3. Monitor quality metrics for 1 hour            │
+│  4. Auto-promote to stable if quality holds       │
 │  NO container rebuild needed                      │
 └───────────────────────────────────────────────────┘
 ```
 
-### Prompt Versioning & Rollback
+### Prompt + Model Matrix (Evaluation)
 
-- SSM keeps full version history: `aws ssm get-parameter-history --name /aiops-cat-demo/prompts/strands/system`
-- Rollback = put previous version content as new version (or point to version N via label)
-- Evaluation reports record which prompt version was active: ties quality scores to prompt iterations
-- Diff between versions: `aws ssm get-parameter --name ... --version 2` vs `--version 3`
+The eval runner can pin both prompt version and model:
 
-### Prompt + Model Matrix
-
-Evaluations should test the cartesian product:
-
-```
-Prompt v3 × claude-sonnet-4-6  → score
-Prompt v3 × claude-haiku-4-5   → score
-Prompt v3 × nova-pro           → score
-Prompt v2 × claude-haiku-4-5   → score (baseline)
+```bash
+python evaluation/runner.py \
+  --models us.anthropic.claude-sonnet-4-6 us.anthropic.claude-haiku-4-5 \
+  --prompt-version 3 --prompt-version 4
 ```
 
-This lets you answer: "Did the prompt change help? Or did the model change help? Or both?"
-
-### Repo Layout Change
+Produces a comparison matrix:
 
 ```
-prompts/                       # NEW — prompt source files
-  strands/system.yaml
+                    Prompt v3    Prompt v4
+claude-sonnet-4-6   92%          94%
+claude-haiku-4-5    78%          75%     ← v4 regressed on haiku!
+```
+
+This answers: "Does the new prompt work across all models, or only on the one I tested locally?"
+
+### Explicit Version Override (Diagnostic)
+
+Same pattern as `model_id` — request payload accepts `prompt_version`:
+
+```json
+{
+  "prompt": "查看火锅的健康数据",
+  "model_id": "us.anthropic.claude-sonnet-4-6-20250514-v1:0",
+  "prompt_version": 2
+}
+```
+
+Useful for:
+- Eval runner testing specific versions
+- DevOps agent replaying failed requests with previous prompt
+- Developer debugging "did this prompt change cause the regression?"
+
+### Local Development (Omni-compatible)
+
+Locally, `prompts.json` stores versions inline:
+
+```json
+{
+  "cat_care_assistant": {
+    "active": {"stable": 1, "canary": {"version": 2, "weight": 20}},
+    "versions": {
+      "1": {
+        "messages": [{"role": "system", "content": "v1 prompt..."}],
+        "created": "2026-06-01T00:00:00Z"
+      },
+      "2": {
+        "messages": [{"role": "system", "content": "v2 prompt..."}],
+        "created": "2026-06-09T00:00:00Z"
+      }
+    },
+    "history": [...]
+  }
+}
+```
+
+Omni plugin reads/writes this file directly. Changes are visible to the agent immediately (mtime-based reload).
+
+### Repo Layout
+
+```
+prompts/                          # Source of truth for CI → SSM upload
+  strands/system.yaml             # Prompt content (latest)
   langgraph/system.yaml
-  voice/system.yaml
 agents/strands/
-  prompt_loader.py             # NEW — SSM/local loader with caching
-  server.py                    # Modified — uses prompt_loader
+  prompts.json                    # Local dev (Omni-compatible, versions inline)
+  prompt_loader.py                # Two-tier loader (SSM or local)
+  server.py                       # Uses prompt_loader
 ```
-
-### Open Questions
-
-- [ ] Should prompts support template variables (e.g., `{{cat_names}}` injected at load time)?
-- [ ] Should we support A/B testing (two prompt versions active, traffic split)?
-- [ ] Should prompt refresh be push-based (SNS notification on SSM change) or pull-based (TTL)?
-- [ ] Should evaluation results embed the full prompt text or just the version number?
 
 ---
 

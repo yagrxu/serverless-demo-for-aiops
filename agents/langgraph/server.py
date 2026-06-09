@@ -65,7 +65,11 @@ def _build_mcp_connection_config() -> dict:
     return config
 
 
-async def _build_agent_with_tools(model_id: str | None = None):
+async def _build_agent_with_tools(
+    model_id: str | None = None,
+    session_id: str = "",
+    prompt_version: int | None = None,
+):
     """Build a fresh MCP client + tools + ReAct agent inside the request.
 
     ``langchain-mcp-adapters`` opens a new MCP session for every tool call
@@ -76,9 +80,11 @@ async def _build_agent_with_tools(model_id: str | None = None):
     if model_id and model_id != MODEL_ID:
         llm = ChatBedrockConverse(model=model_id, region_name=AWS_REGION)
 
+    system_prompt = get_prompt("cat_care_assistant", session_id=session_id, version=prompt_version)
+
     client = MultiServerMCPClient({"cat-care": _build_mcp_connection_config()})
     tools = await client.get_tools()
-    return create_react_agent(model=llm, tools=tools, prompt=get_prompt("cat_care_assistant"))
+    return create_react_agent(model=llm, tools=tools, prompt=system_prompt)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +106,7 @@ class Invocation(BaseModel):
     sessionId: str = ""
     input: dict | None = None
     model_id: str | None = None
+    prompt_version: int | None = None
 
 
 @app.get("/ping")
@@ -122,7 +129,11 @@ async def invocations(payload: Invocation):
         user_content = f"[Context: current cat_id is '{cat_id}']\n{message}"
 
     try:
-        agent = await _build_agent_with_tools(model_id=payload.model_id)
+        agent = await _build_agent_with_tools(
+            model_id=payload.model_id,
+            session_id=payload.sessionId,
+            prompt_version=payload.prompt_version,
+        )
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": user_content}]},
         )
