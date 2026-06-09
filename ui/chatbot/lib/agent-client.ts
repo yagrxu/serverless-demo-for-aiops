@@ -18,24 +18,34 @@ export function getAppConfig(): AppConfig {
   };
 }
 
+export interface InvokeOptions {
+  model_id?: string | null;
+  prompt_version?: number | null;
+}
+
 export async function invokeAgent(
   agent: 'langgraph' | 'strands',
   message: string,
   config: AppConfig,
   sessionId: string,
+  options?: InvokeOptions,
 ): Promise<string> {
   if (config.localMode) {
     const url = agent === 'langgraph' ? config.langgraphUrl : config.strandsUrl;
-    return invokeLocal(url, message, sessionId);
+    return invokeLocal(url, message, sessionId, options);
   } else {
     const arn = agent === 'langgraph' ? config.langgraphRuntimeArn : config.strandsRuntimeArn;
-    return invokeRuntime(arn, message, sessionId, config.awsRegion);
+    return invokeRuntime(arn, message, sessionId, config.awsRegion, options);
   }
 }
 
-async function invokeLocal(url: string, message: string, sessionId: string): Promise<string> {
+async function invokeLocal(url: string, message: string, sessionId: string, options?: InvokeOptions): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
+
+  const reqBody: Record<string, unknown> = { input: { message }, sessionId };
+  if (options?.model_id) reqBody.model_id = options.model_id;
+  if (options?.prompt_version != null) reqBody.prompt_version = options.prompt_version;
 
   try {
     const res = await fetch(`${url}/invocations`, {
@@ -44,7 +54,7 @@ async function invokeLocal(url: string, message: string, sessionId: string): Pro
         'Content-Type': 'application/json',
         'X-Amzn-Bedrock-AgentCore-Runtime-Session-Id': sessionId,
       },
-      body: JSON.stringify({ input: { message } }),
+      body: JSON.stringify(reqBody),
       signal: controller.signal,
     });
 
@@ -52,8 +62,8 @@ async function invokeLocal(url: string, message: string, sessionId: string): Pro
       throw new Error(`Agent returned ${res.status}`);
     }
 
-    const body = await res.json();
-    return body.response ?? JSON.stringify(body, null, 2);
+    const resBody = await res.json();
+    return resBody.response ?? JSON.stringify(resBody, null, 2);
   } catch (err: any) {
     if (err.name === 'AbortError') {
       throw new Error('Request timed out after 30s');
@@ -69,6 +79,7 @@ async function invokeRuntime(
   message: string,
   sessionId: string,
   region: string,
+  options?: InvokeOptions,
 ): Promise<string> {
   // AgentCore Runtime is invoked via a SigV4-signed HTTP POST to:
   // POST /runtimes/{agentRuntimeArn}/invocations
@@ -82,7 +93,10 @@ async function invokeRuntime(
   const encodedArn = encodeURIComponent(arn);
   const hostname = `bedrock-agentcore.${region}.amazonaws.com`;
   const path = `/runtimes/${encodedArn}/invocations`;
-  const payload = JSON.stringify({ input: { message } });
+  const reqBody: Record<string, unknown> = { input: { message }, sessionId };
+  if (options?.model_id) reqBody.model_id = options.model_id;
+  if (options?.prompt_version != null) reqBody.prompt_version = options.prompt_version;
+  const payload = JSON.stringify(reqBody);
 
   const request = new HttpRequest({
     method: 'POST',
@@ -119,6 +133,6 @@ async function invokeRuntime(
     throw new Error(`AgentCore Runtime returned ${res.status}: ${errText}`);
   }
 
-  const body = await res.json();
-  return body.response ?? body.output ?? JSON.stringify(body, null, 2);
+  const resBody = await res.json();
+  return resBody.response ?? resBody.output ?? JSON.stringify(resBody, null, 2);
 }
