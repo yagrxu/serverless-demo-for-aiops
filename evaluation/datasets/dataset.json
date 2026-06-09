@@ -1,0 +1,142 @@
+{
+  "version": "1.0",
+  "metadata": {
+    "domain": "cat-care",
+    "cats": {
+      "hotpot": {"id": "hotpot", "names": ["火锅", "锅锅"]},
+      "bbq": {"id": "bbq", "names": ["烧烤", "烤烤"]}
+    },
+    "tools": [
+      "get_cat_profile", "list_cats", "lookup_cat_by_name",
+      "list_devices", "get_device", "send_device_command",
+      "get_feedings", "record_feeding",
+      "get_health_metrics", "get_health_alerts"
+    ]
+  },
+  "test_cases": [
+    {
+      "id": "greeting-001",
+      "category": "greeting",
+      "input": "你好",
+      "ground_truth": {
+        "expected_summary": "A friendly greeting acknowledging the user and offering to help with cat care tasks",
+        "expected_tools": [],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "greeting-002",
+      "category": "greeting",
+      "input": "谢谢你的帮助，再见！",
+      "ground_truth": {
+        "expected_summary": "A polite farewell response without calling any tools",
+        "expected_tools": [],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "single-tool-001",
+      "category": "single-tool-lookup",
+      "input": "列出所有猫咪",
+      "ground_truth": {
+        "expected_summary": "List all registered cats with their basic info (hotpot and bbq)",
+        "expected_tools": ["list_cats"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "single-tool-002",
+      "category": "single-tool-lookup",
+      "input": "查看hotpot的健康指标",
+      "context": {"cat_id": "hotpot"},
+      "ground_truth": {
+        "expected_summary": "Health metrics for hotpot including weight, activity level, and recent measurements",
+        "expected_tools": ["get_health_metrics"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "single-tool-003",
+      "category": "single-tool-lookup",
+      "input": "我的设备有哪些？",
+      "ground_truth": {
+        "expected_summary": "List of all registered IoT devices (feeders, fountains, trackers)",
+        "expected_tools": ["list_devices"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "multi-tool-001",
+      "category": "multi-tool-lookup",
+      "input": "给我hotpot的完整健康报告，包括指标和警报",
+      "context": {"cat_id": "hotpot"},
+      "ground_truth": {
+        "expected_summary": "Complete health report for hotpot combining metrics and any active alerts",
+        "expected_tools": ["get_health_metrics", "get_health_alerts"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "multi-tool-002",
+      "category": "multi-tool-lookup",
+      "input": "hotpot今天的喂食记录和健康状况",
+      "context": {"cat_id": "hotpot"},
+      "ground_truth": {
+        "expected_summary": "Today's feeding records and health status for hotpot",
+        "expected_tools": ["get_feedings", "get_health_metrics"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "name-resolve-001",
+      "category": "name-to-id-resolution",
+      "input": "锅锅最近吃了什么？",
+      "ground_truth": {
+        "expected_summary": "Recent feeding records for hotpot (resolved from nickname 锅锅)",
+        "expected_tools": ["lookup_cat_by_name", "get_feedings"],
+        "expected_cat_id_resolution": "hotpot"
+      }
+    },
+    {
+      "id": "name-resolve-002",
+      "category": "name-to-id-resolution",
+      "input": "烤烤的健康状况怎么样？",
+      "ground_truth": {
+        "expected_summary": "Health metrics for bbq (resolved from nickname 烤烤)",
+        "expected_tools": ["lookup_cat_by_name", "get_health_metrics"],
+        "expected_cat_id_resolution": "bbq"
+      }
+    },
+    {
+      "id": "name-resolve-003",
+      "category": "name-to-id-resolution",
+      "input": "火锅有没有健康警报？",
+      "ground_truth": {
+        "expected_summary": "Health alerts for hotpot (resolved from name 火锅)",
+        "expected_tools": ["lookup_cat_by_name", "get_health_alerts"],
+        "expected_cat_id_resolution": "hotpot"
+      }
+    },
+    {
+      "id": "write-op-001",
+      "category": "write-operation",
+      "input": "给hotpot喂50克干粮",
+      "context": {"cat_id": "hotpot"},
+      "ground_truth": {
+        "expected_summary": "Record a feeding of 50g dry food for hotpot",
+        "expected_tools": ["record_feeding"],
+        "expected_cat_id_resolution": null
+      }
+    },
+    {
+      "id": "write-op-002",
+      "category": "write-operation",
+      "input": "打开烤烤的自动喂食器",
+      "ground_truth": {
+        "expected_summary": "Send command to activate the automatic feeder device for bbq",
+        "expected_tools": ["lookup_cat_by_name", "list_devices", "send_device_command"],
+        "expected_cat_id_resolution": "bbq"
+      }
+    }
+  ]
+}
