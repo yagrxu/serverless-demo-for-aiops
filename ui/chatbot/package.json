@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.0.0",
+    "@aws-sdk/client-dynamodb": "^3.600.0",
     "@aws-sdk/credential-provider-node": "^3.600.0",
+    "@aws-sdk/lib-dynamodb": "^3.600.0",
     "@smithy/protocol-http": "^4.0.0",
     "@smithy/signature-v4": "^4.0.0",
     "aws-rum-web": "^1.18.0",

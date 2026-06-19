@@ -45,7 +45,8 @@ trafgen/                  # Traffic generator — produces realistic load for AI
 evaluation/               # Agent evaluation framework — LLM-as-judge scoring for CI
 mcp-server/               # MCP Server — local equivalent of AgentCore Gateway
 ui/
-  chatbot/                # Split-screen comparison of LangGraph vs Strands
+  chatbot/                # Split-screen comparison of LangGraph vs Strands + WeChat BFF (/wx/*)
+  wx-mini-program/        # WeChat Mini Program — end-user chat interface (TypeScript)
   device-simulator/
   admin-console/
 scripts/

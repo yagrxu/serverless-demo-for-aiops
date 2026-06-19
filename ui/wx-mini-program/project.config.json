@@ -1,0 +1,23 @@
+{
+  "miniprogramRoot": "miniprogram/",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "urlCheck": true,
+    "compileHotReLoad": true,
+    "useMultiFrameRuntime": true,
+    "useApiHook": true,
+    "babelSetting": {
+      "ignore": [],
+      "disablePlugins": [],
+      "outputPath": ""
+    }
+  },
+  "appid": "",
+  "projectname": "cat-care-assistant",
+  "description": "AI Cat Care Assistant - WeChat Mini Program",
+  "libVersion": "3.4.6",
+  "srcMiniprogramRoot": "miniprogram/"
+}

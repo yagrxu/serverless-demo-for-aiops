@@ -1,0 +1,20 @@
+<view class="login-page">
+  <view class="logo-section">
+    <text class="logo-emoji">🐱</text>
+    <text class="title">猫咪护理助手</text>
+    <text class="subtitle">AI 驱动的智能养猫顾问</text>
+  </view>
+
+  <view class="login-section">
+    <button
+      class="login-btn"
+      type="primary"
+      loading="{{loading}}"
+      disabled="{{loading}}"
+      bindtap="handleLogin"
+    >
+      微信登录
+    </button>
+    <text wx:if="{{error}}" class="error-text">{{error}}</text>
+  </view>
+</view>

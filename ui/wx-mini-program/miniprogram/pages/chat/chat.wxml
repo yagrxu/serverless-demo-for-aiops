@@ -1,0 +1,66 @@
+<view class="chat-page">
+  <!-- Cat picker header -->
+  <view class="cat-picker-bar">
+    <picker
+      mode="selector"
+      range="{{cats}}"
+      range-key="name"
+      bindchange="onCatChange"
+    >
+      <view class="picker-display">
+        <text class="picker-label">当前猫咪:</text>
+        <text class="picker-value">{{currentCatName || '请选择'}}</text>
+        <text class="picker-arrow">▾</text>
+      </view>
+    </picker>
+  </view>
+
+  <!-- Messages area -->
+  <scroll-view
+    class="messages-area"
+    scroll-y
+    scroll-into-view="{{scrollToView}}"
+    scroll-with-animation
+  >
+    <view wx:if="{{messages.length === 0}}" class="empty-state">
+      <text class="empty-emoji">🐱</text>
+      <text class="empty-text">有什么关于猫咪的问题？随时问我~</text>
+    </view>
+    <view
+      wx:for="{{messages}}"
+      wx:key="index"
+      id="msg-{{index}}"
+      class="message-item {{item.role}}"
+    >
+      <view class="message-bubble {{item.role}}">
+        <text class="message-text">{{item.content}}</text>
+        <view wx:if="{{item.role === 'assistant' && loading && index === messages.length - 1 && !item.content}}" class="typing-indicator">
+          <text>思考中...</text>
+        </view>
+      </view>
+    </view>
+    <view class="scroll-anchor" id="msg-bottom"></view>
+  </scroll-view>
+
+  <!-- Input area -->
+  <view class="input-area">
+    <input
+      class="message-input"
+      placeholder="输入消息..."
+      value="{{inputValue}}"
+      bindinput="onInputChange"
+      bindconfirm="sendMessage"
+      confirm-type="send"
+      disabled="{{loading || !currentCatId}}"
+    />
+    <button
+      class="send-btn"
+      size="mini"
+      type="primary"
+      bindtap="sendMessage"
+      disabled="{{loading || !inputValue.trim() || !currentCatId}}"
+    >
+      发送
+    </button>
+  </view>
+</view>
