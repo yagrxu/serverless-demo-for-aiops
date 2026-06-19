@@ -9,7 +9,13 @@ const WX_USERS_TABLE = process.env.WX_USERS_TABLE || 'WxUsers';
 const TTL_DAYS = 30;
 
 const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' }),
+  new DynamoDBClient({
+    region: process.env.AWS_REGION || 'us-east-1',
+    ...(process.env.LOCAL_MODE === 'true' && {
+      endpoint: 'http://localhost:8001',
+      credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
+    }),
+  }),
 );
 
 /**

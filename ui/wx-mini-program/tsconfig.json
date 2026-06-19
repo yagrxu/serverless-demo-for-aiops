@@ -15,6 +15,6 @@
     "lib": ["ES2017"],
     "typeRoots": ["./typings"]
   },
-  "include": ["miniprogram/**/*.ts"],
+  "include": ["**/*.ts"],
   "exclude": ["node_modules"]
 }

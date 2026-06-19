@@ -6,7 +6,13 @@ import { DynamoDBDocumentClient, ScanCommand } from '@aws-sdk/lib-dynamodb';
 const CAT_PROFILES_TABLE = process.env.CAT_PROFILES_TABLE || 'CatProfiles';
 
 const ddb = DynamoDBDocumentClient.from(
-  new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' }),
+  new DynamoDBClient({
+    region: process.env.AWS_REGION || 'us-east-1',
+    ...(process.env.LOCAL_MODE === 'true' && {
+      endpoint: 'http://localhost:8001',
+      credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
+    }),
+  }),
 );
 
 /**
