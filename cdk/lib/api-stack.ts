@@ -16,6 +16,8 @@ export interface ApiStackProps extends cdk.StackProps {
   healthMetrics: dynamodb.Table;
   healthAlerts: dynamodb.Table;
   vetRecords: dynamodb.Table;
+  dailyNutritionRollup: dynamodb.Table;
+  dailyHealthSummary: dynamodb.Table;
 }
 
 /**
@@ -117,11 +119,15 @@ export class ApiStack extends cdk.Stack {
         HEALTH_METRICS_TABLE: props.healthMetrics.tableName,
         HEALTH_ALERTS_TABLE: props.healthAlerts.tableName,
         FEEDING_EVENTS_TABLE: props.feedingEvents.tableName,
+        DAILY_NUTRITION_ROLLUP_TABLE: props.dailyNutritionRollup.tableName,
+        DAILY_HEALTH_SUMMARY_TABLE: props.dailyHealthSummary.tableName,
       },
     } as lambda.FunctionProps);
     props.healthMetrics.grantReadWriteData(healthFn);
     props.healthAlerts.grantReadWriteData(healthFn);
     props.feedingEvents.grantReadData(healthFn);
+    props.dailyNutritionRollup.grantReadData(healthFn);
+    props.dailyHealthSummary.grantReadData(healthFn);
 
     // --- vet ---
     const vetFn = new lambda.Function(this, 'VetFn', {

@@ -195,6 +195,30 @@ export class GatewayStack extends cdk.Stack {
                       Required: ['cat_id'],
                     },
                   },
+                  {
+                    Name: 'get_daily_rollup',
+                    Description: 'Get daily nutrition rollup (total grams, wet/dry breakdown, feeding count) for a cat. Returns last 7 days if no date specified.',
+                    InputSchema: {
+                      Type: 'object',
+                      Properties: {
+                        cat_id: { Type: 'string', Description: 'The ID of the cat' },
+                        date: { Type: 'string', Description: 'Optional YYYY-MM-DD date to get a specific day' },
+                      },
+                      Required: ['cat_id'],
+                    },
+                  },
+                  {
+                    Name: 'get_health_summary',
+                    Description: 'Get daily health summary (avg weight, activity stats) for a cat. Returns last 7 days if no date specified.',
+                    InputSchema: {
+                      Type: 'object',
+                      Properties: {
+                        cat_id: { Type: 'string', Description: 'The ID of the cat' },
+                        date: { Type: 'string', Description: 'Optional YYYY-MM-DD date to get a specific day' },
+                      },
+                      Required: ['cat_id'],
+                    },
+                  },
                 ],
               },
             },

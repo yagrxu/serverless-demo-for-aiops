@@ -33,6 +33,12 @@ ALERTS = _ddb.Table(os.environ["HEALTH_ALERTS_TABLE"])
 FEEDING_TABLE_NAME = os.environ.get("FEEDING_EVENTS_TABLE")
 FEEDING = _ddb.Table(FEEDING_TABLE_NAME) if FEEDING_TABLE_NAME else None
 
+# Phase 5: rollup tables for daily aggregates
+NUTRITION_ROLLUP_NAME = os.environ.get("DAILY_NUTRITION_ROLLUP_TABLE")
+NUTRITION_ROLLUP = _ddb.Table(NUTRITION_ROLLUP_NAME) if NUTRITION_ROLLUP_NAME else None
+HEALTH_SUMMARY_NAME = os.environ.get("DAILY_HEALTH_SUMMARY_TABLE")
+HEALTH_SUMMARY = _ddb.Table(HEALTH_SUMMARY_NAME) if HEALTH_SUMMARY_NAME else None
+
 
 def _default(o):
     if isinstance(o, Decimal):
@@ -216,6 +222,41 @@ def _dispatch_gateway(event, context):
             result = _compute_health_score(cat_id)
             metrics.add_metric(name="HealthScoreComputed", unit=MetricUnit.Count, value=1)
             return result
+
+        elif tool_name == "get_daily_rollup":
+            cat_id = tool_input.get("cat_id")
+            if not cat_id:
+                return {"error": "cat_id is required"}
+            if not NUTRITION_ROLLUP:
+                return {"error": "rollup table not configured"}
+            date = tool_input.get("date")
+            if date:
+                res = NUTRITION_ROLLUP.get_item(Key={"cat_id": cat_id, "date": date})
+                return res.get("Item") or {"message": "no rollup for this date"}
+            # Last 7 days
+            res = NUTRITION_ROLLUP.query(
+                KeyConditionExpression=Key("cat_id").eq(cat_id),
+                ScanIndexForward=False,
+                Limit=7,
+            )
+            return res.get("Items", [])
+
+        elif tool_name == "get_health_summary":
+            cat_id = tool_input.get("cat_id")
+            if not cat_id:
+                return {"error": "cat_id is required"}
+            if not HEALTH_SUMMARY:
+                return {"error": "summary table not configured"}
+            date = tool_input.get("date")
+            if date:
+                res = HEALTH_SUMMARY.get_item(Key={"cat_id": cat_id, "date": date})
+                return res.get("Item") or {"message": "no summary for this date"}
+            res = HEALTH_SUMMARY.query(
+                KeyConditionExpression=Key("cat_id").eq(cat_id),
+                ScanIndexForward=False,
+                Limit=7,
+            )
+            return res.get("Items", [])
 
         else:
             return {"error": f"unknown tool: {tool_name}"}

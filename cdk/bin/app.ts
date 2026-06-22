@@ -11,6 +11,7 @@ import { UiStack } from '../lib/ui-stack';
 import { FargateStack } from '../lib/fargate-stack';
 import { ObservabilityStack } from '../lib/observability-stack';
 import { TrafgenStack } from '../lib/trafgen-stack';
+import { AggregationStack } from '../lib/aggregation-stack';
 import { SlackStack } from '../../slack/cdk/lib/slack-stack';
 import { defaultConfig } from '../lib/config';
 
@@ -48,6 +49,8 @@ const api = new ApiStack(app, `${cfg.projectName}-api`, {
   healthMetrics: data.healthMetrics,
   healthAlerts: data.healthAlerts,
   vetRecords: data.vetRecords,
+  dailyNutritionRollup: data.dailyNutritionRollup,
+  dailyHealthSummary: data.dailyHealthSummary,
 });
 
 // Observability_Stack is created at the END of app.ts so it can take
@@ -65,6 +68,16 @@ const gateway = new GatewayStack(app, `${cfg.projectName}-gateway`, {
     vet: api.vetFnArn,
   },
 });
+
+// --- Async Aggregation (Phase 5) ---
+const aggregation = new AggregationStack(app, `${cfg.projectName}-aggregation`, {
+  env,
+  feedingEvents: data.feedingEvents,
+  healthMetrics: data.healthMetrics,
+  dailyNutritionRollup: data.dailyNutritionRollup,
+  dailyHealthSummary: data.dailyHealthSummary,
+});
+aggregation.addDependency(data);
 
 // --- Chatbot Fargate + Agents ---
 let chatbotAlbDnsName: string | undefined;
