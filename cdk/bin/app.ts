@@ -86,6 +86,8 @@ if (cfg.deployAgents && !skipAgents) {
     chatbotRepo: ecr.repos.chatbot,
     langgraphRuntimeArn,
     strandsRuntimeArn,
+    wxUsersTable: data.wxUsers,
+    catProfilesTable: data.catProfiles,
   });
   fargate.addDependency(agents);
 
@@ -98,6 +100,8 @@ if (cfg.deployAgents && !skipAgents) {
     chatbotRepo: ecr.repos.chatbot,
     langgraphRuntimeArn,
     strandsRuntimeArn,
+    wxUsersTable: data.wxUsers,
+    catProfilesTable: data.catProfiles,
   });
 
   chatbotAlbDnsName = fargate.albDnsName;

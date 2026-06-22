@@ -4,6 +4,7 @@ import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as ecr from 'aws-cdk-lib/aws-ecr';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as elbv2 from 'aws-cdk-lib/aws-elasticloadbalancingv2';
 
 export interface FargateStackProps extends cdk.StackProps {
@@ -11,6 +12,8 @@ export interface FargateStackProps extends cdk.StackProps {
   chatbotRepo: ecr.IRepository;
   langgraphRuntimeArn: string;
   strandsRuntimeArn: string;
+  wxUsersTable?: dynamodb.ITable;
+  catProfilesTable?: dynamodb.ITable;
 }
 
 /**
@@ -54,6 +57,14 @@ export class FargateStack extends cdk.Stack {
       ],
     }));
 
+    // Grant DDB access for WeChat BFF endpoints
+    if (props.wxUsersTable) {
+      props.wxUsersTable.grantReadWriteData(taskRole);
+    }
+    if (props.catProfilesTable) {
+      props.catProfilesTable.grantReadData(taskRole);
+    }
+
     // --- Task Definition ---
     const taskDef = new ecs.FargateTaskDefinition(this, 'ChatbotTaskDef', {
       cpu: 512,
@@ -74,6 +85,8 @@ export class FargateStack extends cdk.Stack {
         AWS_REGION: cdk.Stack.of(this).region,
         HOSTNAME: '0.0.0.0',
         PORT: '3000',
+        ...(props.wxUsersTable && { WX_USERS_TABLE: props.wxUsersTable.tableName }),
+        ...(props.catProfilesTable && { CAT_PROFILES_TABLE: props.catProfilesTable.tableName }),
       },
       logging: ecs.LogDrivers.awsLogs({
         streamPrefix: 'chatbot',

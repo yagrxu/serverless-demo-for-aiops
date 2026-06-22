@@ -17,6 +17,7 @@ export class DataStack extends cdk.Stack {
   readonly feedingEvents: dynamodb.Table;
   readonly healthMetrics: dynamodb.Table;
   readonly healthAlerts: dynamodb.Table;
+  readonly wxUsers: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -75,6 +76,12 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'alert_id', type: dynamodb.AttributeType.STRING },
+    });
+
+    this.wxUsers = new dynamodb.Table(this, 'WxUsers', {
+      ...common,
+      partitionKey: { name: 'openid', type: dynamodb.AttributeType.STRING },
+      timeToLiveAttribute: 'ttl',
     });
   }
 }
