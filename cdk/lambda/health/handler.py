@@ -160,7 +160,7 @@ def _create_alert(cat_id: str, score: int, components: dict):
         ALERTS.put_item(Item=_to_decimal(alert))
         metrics.add_metric(name="HealthAlertCreated", unit=MetricUnit.Count, value=1)
         logger.info("Health alert created", extra={"cat_id": cat_id, "score": score})
-    except Exception as e:
+    except Exception:
         logger.exception("Failed to create health alert")
 
 
