@@ -8,6 +8,7 @@ export interface GatewayStackProps extends cdk.StackProps {
     device: string;
     feeding: string;
     health: string;
+    vet: string;
   };
 }
 
@@ -34,6 +35,7 @@ export class GatewayStack extends cdk.Stack {
         props.lambdaArns.device,
         props.lambdaArns.feeding,
         props.lambdaArns.health,
+        props.lambdaArns.vet,
       ],
     }));
 
@@ -258,6 +260,68 @@ export class GatewayStack extends cdk.Stack {
       },
     });
     deviceTarget.addDependency(gateway);
+
+    // vet target (3 tools: get_vet_records, create_vet_record, recommend_feeding)
+    const vetTarget = new cdk.CfnResource(this, 'VetTarget', {
+      type: 'AWS::BedrockAgentCore::GatewayTarget',
+      properties: {
+        GatewayIdentifier: gateway.getAtt('GatewayIdentifier'),
+        Name: 'vet',
+        CredentialProviderConfigurations: [{
+          CredentialProviderType: 'GATEWAY_IAM_ROLE',
+        }],
+        TargetConfiguration: {
+          Mcp: {
+            Lambda: {
+              LambdaArn: props.lambdaArns.vet,
+              ToolSchema: {
+                InlinePayload: [
+                  {
+                    Name: 'get_vet_records',
+                    Description: 'Get vet records (dietary restrictions, post-op holds, allergies, weight targets) for a cat. These override standard feeding rules.',
+                    InputSchema: {
+                      Type: 'object',
+                      Properties: {
+                        cat_id: { Type: 'string', Description: 'The ID of the cat' },
+                        active_only: { Type: 'boolean', Description: 'If true (default), only return currently active records' },
+                      },
+                      Required: ['cat_id'],
+                    },
+                  },
+                  {
+                    Name: 'create_vet_record',
+                    Description: 'Create a new vet record for a cat',
+                    InputSchema: {
+                      Type: 'object',
+                      Properties: {
+                        cat_id: { Type: 'string', Description: 'The ID of the cat' },
+                        record_type: { Type: 'string', Description: 'One of: dietary_restriction, post_op_hold, allergy, weight_target' },
+                        effective_from: { Type: 'string', Description: 'ISO timestamp when this record takes effect' },
+                        effective_until: { Type: 'string', Description: 'ISO timestamp when this record expires (null for open-ended)' },
+                        details: { Type: 'object', Description: 'Type-specific payload (e.g. restriction details, allergen info)' },
+                      },
+                      Required: ['cat_id', 'record_type'],
+                    },
+                  },
+                  {
+                    Name: 'recommend_feeding',
+                    Description: 'Get a feeding recommendation for a cat based on their profile, history, vet records, and health status',
+                    InputSchema: {
+                      Type: 'object',
+                      Properties: {
+                        cat_id: { Type: 'string', Description: 'The ID of the cat' },
+                      },
+                      Required: ['cat_id'],
+                    },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    });
+    vetTarget.addDependency(gateway);
 
     // --- Tracing: deliver gateway spans to X-Ray ---
     //
