@@ -15,8 +15,10 @@ process via the Dockerfile CMD. No manual TracerProvider setup here.
 
 import tracing_extras  # noqa: F401 — attaches CodeMetadataSpanProcessor, no-op without OTel
 
+import json as _json
 import os
 import traceback
+from pathlib import Path as _Path
 
 import boto3
 from botocore.credentials import Credentials
@@ -37,6 +39,19 @@ from prompt_loader import get_prompt
 MCP_SERVER_URL = os.environ.get("MCP_SERVER_URL", "http://localhost:8083/mcp")
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+# Model registry — resolve friendly IDs to Bedrock model IDs
+_MODELS_JSON = _Path(__file__).resolve().parent.parent / "shared" / "models.json"
+_MODEL_REGISTRY: dict[str, str] = {}
+if _MODELS_JSON.exists():
+    for _m in _json.loads(_MODELS_JSON.read_text()):
+        _MODEL_REGISTRY[_m["id"]] = _m["model_id"]
+
+
+def _resolve_model_id(model_id: str | None) -> str | None:
+    if not model_id:
+        return None
+    return _MODEL_REGISTRY.get(model_id, model_id)
 
 # Build the LLM once — it's stateless and safe to share across requests.
 _llm = ChatBedrockConverse(model=MODEL_ID, region_name=AWS_REGION)
@@ -78,7 +93,9 @@ async def _build_agent_with_tools(
     """
     llm = _llm
     if model_id and model_id != MODEL_ID:
-        llm = ChatBedrockConverse(model=model_id, region_name=AWS_REGION)
+        resolved = _resolve_model_id(model_id)
+        if resolved and resolved != MODEL_ID:
+            llm = ChatBedrockConverse(model=resolved, region_name=AWS_REGION)
 
     system_prompt = get_prompt("cat_care_assistant", session_id=session_id, version=prompt_version)
 

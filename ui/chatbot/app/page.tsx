@@ -10,11 +10,24 @@ interface InvokeResponse {
   error?: string;
 }
 
+interface ModelEntry {
+  id: string;
+  display_name: string;
+  tier: string;
+}
+
+// Inline the registry — avoids a fetch in dev and works in Docker
+const MODELS: ModelEntry[] = [
+  { id: "claude-haiku-4-5", display_name: "Claude Haiku 4.5", tier: "frontier" },
+  { id: "claude-sonnet-4-5", display_name: "Claude Sonnet 4.5", tier: "frontier" },
+  { id: "nova-pro", display_name: "Nova Pro", tier: "mid" },
+  { id: "llama-3-3-70b", display_name: "Llama 3.3 70B", tier: "weak" },
+];
+
 export default function Home() {
   const [input, setInput] = useState('');
   const [modelId, setModelId] = useState('');
   const [promptVersion, setPromptVersion] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [lgMsgs, setLgMsgs] = useState<Msg[]>([]);
   const [stMsgs, setStMsgs] = useState<Msg[]>([]);
   const [lgBusy, setLgBusy] = useState(false);
@@ -139,33 +152,30 @@ export default function Home() {
               Send
             </button>
           </div>
-          <div className="mt-2">
-            <button
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          <div className="mt-2 flex items-center gap-3">
+            <label className="text-xs text-gray-500">Model:</label>
+            <select
+              value={modelId}
+              onChange={(e) => setModelId(e.target.value)}
+              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs
+                         focus:outline-none focus:ring-1 focus:ring-indigo-500/30 bg-white"
             >
-              {showAdvanced ? '▾ Hide' : '▸ Advanced'} overrides
-            </button>
-            {showAdvanced && (
-              <div className="mt-2 flex gap-3">
-                <input
-                  value={modelId}
-                  onChange={(e) => setModelId(e.target.value)}
-                  placeholder="model_id (blank = default)"
-                  className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-xs
-                             placeholder:text-gray-400
-                             focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
-                />
-                <input
-                  value={promptVersion}
-                  onChange={(e) => setPromptVersion(e.target.value)}
-                  placeholder="prompt_version (blank = default)"
-                  className="w-48 px-3 py-1.5 rounded-lg border border-gray-200 text-xs
-                             placeholder:text-gray-400
-                             focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
-                />
-              </div>
-            )}
+              <option value="">Default (Haiku 4.5)</option>
+              {MODELS.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.display_name} ({m.tier})
+                </option>
+              ))}
+            </select>
+            <label className="text-xs text-gray-500 ml-2">Prompt ver:</label>
+            <input
+              value={promptVersion}
+              onChange={(e) => setPromptVersion(e.target.value)}
+              placeholder="latest"
+              className="w-20 px-3 py-1.5 rounded-lg border border-gray-200 text-xs
+                         placeholder:text-gray-400
+                         focus:outline-none focus:ring-1 focus:ring-indigo-500/30"
+            />
           </div>
         </div>
       </div>
