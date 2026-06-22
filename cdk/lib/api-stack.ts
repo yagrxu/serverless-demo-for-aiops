@@ -81,10 +81,12 @@ export class ApiStack extends cdk.Stack {
       environment: {
         DEVICES_TABLE: props.devices.tableName,
         DEVICE_TELEMETRY_TABLE: props.deviceTelemetry.tableName,
+        FEEDING_EVENTS_TABLE: props.feedingEvents.tableName,
       },
     } as lambda.FunctionProps);
     props.devices.grantReadWriteData(deviceFn);
     props.deviceTelemetry.grantReadWriteData(deviceFn);
+    props.feedingEvents.grantReadData(deviceFn);
 
     // --- feeding ---
     const feedingFn = new lambda.Function(this, 'FeedingFn', {
@@ -111,10 +113,12 @@ export class ApiStack extends cdk.Stack {
       environment: {
         HEALTH_METRICS_TABLE: props.healthMetrics.tableName,
         HEALTH_ALERTS_TABLE: props.healthAlerts.tableName,
+        FEEDING_EVENTS_TABLE: props.feedingEvents.tableName,
       },
     } as lambda.FunctionProps);
     props.healthMetrics.grantReadWriteData(healthFn);
     props.healthAlerts.grantReadWriteData(healthFn);
+    props.feedingEvents.grantReadData(healthFn);
 
     // Wire CloudWatch Application Signals onto every Lambda. The helper
     // is region-portable — it picks the right ADOT layer ARN for the
