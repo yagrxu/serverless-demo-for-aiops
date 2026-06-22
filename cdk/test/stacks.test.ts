@@ -11,8 +11,8 @@ describe('DataStack', () => {
     template = Template.fromStack(stack);
   });
 
-  test('creates nine DynamoDB tables', () => {
-    template.resourceCountIs('AWS::DynamoDB::Table', 9);
+  test('creates eleven DynamoDB tables', () => {
+    template.resourceCountIs("AWS::DynamoDB::Table", 11);
   });
 
   test('CatProfiles table has correct partition key', () => {

@@ -19,6 +19,8 @@ export class DataStack extends cdk.Stack {
   readonly healthAlerts: dynamodb.Table;
   readonly wxUsers: dynamodb.Table;
   readonly vetRecords: dynamodb.Table;
+  readonly dailyNutritionRollup: dynamodb.Table;
+  readonly dailyHealthSummary: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -62,12 +64,14 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts', type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
     });
 
     this.healthMetrics = new dynamodb.Table(this, 'HealthMetrics', {
       ...common,
       partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'ts', type: dynamodb.AttributeType.STRING },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
       // Phase 4 (Req 6.12) — full-table-scan bug scenario uses this to
       // surface the partition that's being hit hardest.
       contributorInsightsEnabled: true,
@@ -89,6 +93,18 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'record_id', type: dynamodb.AttributeType.STRING },
+    });
+
+    this.dailyNutritionRollup = new dynamodb.Table(this, 'DailyNutritionRollup', {
+      ...common,
+      partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'date', type: dynamodb.AttributeType.STRING },
+    });
+
+    this.dailyHealthSummary = new dynamodb.Table(this, 'DailyHealthSummary', {
+      ...common,
+      partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'date', type: dynamodb.AttributeType.STRING },
     });
 
     // Phase 4: household_id GSI on CatProfiles for multi-pet queries
