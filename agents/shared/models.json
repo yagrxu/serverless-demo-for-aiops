@@ -1,0 +1,35 @@
+[
+  {
+    "id": "claude-haiku-4-5",
+    "display_name": "Claude Haiku 4.5",
+    "provider": "bedrock",
+    "model_id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+    "tier": "frontier",
+    "default": true,
+    "supports": ["tool_use", "vision"]
+  },
+  {
+    "id": "claude-sonnet-4-5",
+    "display_name": "Claude Sonnet 4.5",
+    "provider": "bedrock",
+    "model_id": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "tier": "frontier",
+    "supports": ["tool_use", "vision"]
+  },
+  {
+    "id": "nova-pro",
+    "display_name": "Nova Pro",
+    "provider": "bedrock",
+    "model_id": "us.amazon.nova-pro-v1:0",
+    "tier": "mid",
+    "supports": ["tool_use"]
+  },
+  {
+    "id": "llama-3-3-70b",
+    "display_name": "Llama 3.3 70B",
+    "provider": "bedrock",
+    "model_id": "us.meta.llama3-3-70b-instruct-v1:0",
+    "tier": "weak",
+    "supports": ["tool_use"]
+  }
+]

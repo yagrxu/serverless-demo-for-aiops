@@ -16,7 +16,9 @@ process via the Dockerfile CMD. No manual TracerProvider setup here.
 import tracing_extras  # noqa: F401 — attaches CodeMetadataSpanProcessor, no-op without OTel
 
 import asyncio
+import json
 import os
+from pathlib import Path
 
 import boto3
 from botocore.credentials import Credentials
@@ -40,6 +42,24 @@ MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 
 PROMPT_NAME = "cat_care_assistant"
+
+# ---------------------------------------------------------------------------
+# Model registry — resolve friendly IDs to Bedrock model IDs
+# ---------------------------------------------------------------------------
+_MODELS_JSON = Path(__file__).resolve().parent.parent / "shared" / "models.json"
+_MODEL_REGISTRY: dict[str, str] = {}
+if _MODELS_JSON.exists():
+    for m in json.loads(_MODELS_JSON.read_text()):
+        _MODEL_REGISTRY[m["id"]] = m["model_id"]
+
+
+def _resolve_model_id(model_id: str | None) -> str | None:
+    """Resolve a registry ID (e.g. 'nova-pro') to a Bedrock model ID."""
+    if not model_id:
+        return None
+    # If it's a registry key, resolve it; otherwise pass through as raw Bedrock ID
+    return _MODEL_REGISTRY.get(model_id, model_id)
+
 
 # ---------------------------------------------------------------------------
 # Reusable model — model construction is cheap and stateless, so it stays
@@ -136,8 +156,9 @@ def _run_agent(
         mcp_client = None
 
     effective_model = _model
-    if model_id and model_id != MODEL_ID:
-        effective_model = BedrockModel(model_id=model_id, region_name=AWS_REGION)
+    resolved = _resolve_model_id(model_id)
+    if resolved and resolved != MODEL_ID:
+        effective_model = BedrockModel(model_id=resolved, region_name=AWS_REGION)
 
     system_prompt = get_prompt(PROMPT_NAME, session_id=session_id, version=prompt_version)
 
