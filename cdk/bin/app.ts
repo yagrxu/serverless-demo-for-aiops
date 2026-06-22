@@ -47,6 +47,7 @@ const api = new ApiStack(app, `${cfg.projectName}-api`, {
   feedingEvents: data.feedingEvents,
   healthMetrics: data.healthMetrics,
   healthAlerts: data.healthAlerts,
+  vetRecords: data.vetRecords,
 });
 
 // Observability_Stack is created at the END of app.ts so it can take
@@ -61,6 +62,7 @@ const gateway = new GatewayStack(app, `${cfg.projectName}-gateway`, {
     device: api.deviceFnArn,
     feeding: api.feedingFnArn,
     health: api.healthFnArn,
+    vet: api.vetFnArn,
   },
 });
 

@@ -18,6 +18,7 @@ export class DataStack extends cdk.Stack {
   readonly healthMetrics: dynamodb.Table;
   readonly healthAlerts: dynamodb.Table;
   readonly wxUsers: dynamodb.Table;
+  readonly vetRecords: dynamodb.Table;
 
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
@@ -82,6 +83,18 @@ export class DataStack extends cdk.Stack {
       ...common,
       partitionKey: { name: 'openid', type: dynamodb.AttributeType.STRING },
       timeToLiveAttribute: 'ttl',
+    });
+
+    this.vetRecords = new dynamodb.Table(this, 'VetRecords', {
+      ...common,
+      partitionKey: { name: 'cat_id', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'record_id', type: dynamodb.AttributeType.STRING },
+    });
+
+    // Phase 4: household_id GSI on CatProfiles for multi-pet queries
+    this.catProfiles.addGlobalSecondaryIndex({
+      indexName: 'by-household',
+      partitionKey: { name: 'household_id', type: dynamodb.AttributeType.STRING },
     });
   }
 }

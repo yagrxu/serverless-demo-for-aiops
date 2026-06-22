@@ -15,6 +15,7 @@ export interface ApiStackProps extends cdk.StackProps {
   feedingEvents: dynamodb.Table;
   healthMetrics: dynamodb.Table;
   healthAlerts: dynamodb.Table;
+  vetRecords: dynamodb.Table;
 }
 
 /**
@@ -30,6 +31,7 @@ export class ApiStack extends cdk.Stack {
   readonly deviceFnArn: string;
   readonly feedingFnArn: string;
   readonly healthFnArn: string;
+  readonly vetFnArn: string;
   // Function refs and the access log group are exposed so the
   // Observability_Stack can build dashboards / log query definitions
   // against them without re-deriving names.
@@ -37,6 +39,7 @@ export class ApiStack extends cdk.Stack {
   readonly deviceFn: lambda.IFunction;
   readonly feedingFn: lambda.IFunction;
   readonly healthFn: lambda.IFunction;
+  readonly vetFn: lambda.IFunction;
   readonly accessLogGroup: logs.ILogGroup;
 
   constructor(scope: Construct, id: string, props: ApiStackProps) {
@@ -120,10 +123,21 @@ export class ApiStack extends cdk.Stack {
     props.healthAlerts.grantReadWriteData(healthFn);
     props.feedingEvents.grantReadData(healthFn);
 
+    // --- vet ---
+    const vetFn = new lambda.Function(this, 'VetFn', {
+      ...lambdaCommon,
+      handler: 'handler.lambda_handler',
+      code: bundledCode('vet'),
+      environment: {
+        VET_RECORDS_TABLE: props.vetRecords.tableName,
+      },
+    } as lambda.FunctionProps);
+    props.vetRecords.grantReadWriteData(vetFn);
+
     // Wire CloudWatch Application Signals onto every Lambda. The helper
     // is region-portable — it picks the right ADOT layer ARN for the
     // stack's region and attaches the managed policy.
-    for (const fn of [catFn, deviceFn, feedingFn, healthFn]) {
+    for (const fn of [catFn, deviceFn, feedingFn, healthFn, vetFn]) {
       applyApplicationSignalsToLambda(fn);
     }
 
@@ -133,10 +147,12 @@ export class ApiStack extends cdk.Stack {
     this.deviceFnArn = deviceFn.functionArn;
     this.feedingFnArn = feedingFn.functionArn;
     this.healthFnArn = healthFn.functionArn;
+    this.vetFnArn = vetFn.functionArn;
     this.catProfileFn = catFn;
     this.deviceFn = deviceFn;
     this.feedingFn = feedingFn;
     this.healthFn = healthFn;
+    this.vetFn = vetFn;
 
     // --- API Gateway ---
     // JSON access logs to a dedicated log group so Logs Insights queries
@@ -203,6 +219,11 @@ export class ApiStack extends cdk.Stack {
     const health = this.api.root.addResource('health').addResource('{cat_id}');
     health.addMethod('GET', new apigateway.LambdaIntegration(healthFn));
     health.addResource('alerts').addMethod('GET', new apigateway.LambdaIntegration(healthFn));
+
+    // /vet/{cat_id}
+    const vet = this.api.root.addResource('vet').addResource('{cat_id}');
+    vet.addMethod('GET', new apigateway.LambdaIntegration(vetFn));
+    vet.addMethod('POST', new apigateway.LambdaIntegration(vetFn));
 
     this.apiUrl = new cdk.CfnOutput(this, 'ApiUrl', { value: this.api.url });
   }
