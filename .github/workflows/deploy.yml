@@ -388,11 +388,13 @@ jobs:
           npx cdk deploy \
             ${PROJECT_NAME}-fargate \
             ${PROJECT_NAME}-ui \
+            ${PROJECT_NAME}-aggregation \
             ${PROJECT_NAME}-observability \
             ${PROJECT_NAME}-trafgen \
             --require-approval never \
             -c imageTag=${{ github.sha }} \
-            -c trafgenEnabled=true
+            -c trafgenEnabled=true \
+            -c slackEnabled=true
 
       # ===================================================================
       # Phase 5: Deploy Slack integration stack.
