@@ -1,12 +1,16 @@
-# Baseline traffic profile for the cat-care AIOps demo.
+# Smart Cat-Care Daily Life — Traffic Profile
 #
-# Designed for continuous cloud execution (55min/hour via Fargate).
-# Feeding behavior is realistic: ~3 feedings per cat per day.
-# Anomalous feedings occur at ~5% rate for AIOps detection.
+# Models the daily rhythm of a multi-cat household with smart feeding
+# devices, vet records, and an AI assistant.
 #
-# At 0.5 RPS over 55 minutes = ~1650 scenario picks per hour.
-# Feeding scenarios have very low weight so only ~3-5 feedings/hour
-# across all cats (realistic for 3 cats = ~1-2 per cat per day).
+# Three personas represent different user behaviors:
+#   - alice: attentive owner, 2 cats (火锅+烧烤), checks everything
+#   - bob: casual co-owner, mainly cares about 烧烤's weight
+#   - visitor: just browsing the demo
+#
+# Traffic pattern follows a realistic day cycle when combined with
+# the Fargate scheduled task (runs every hour, 55min window).
+# The scheduler's time-of-day weighting makes morning/evening heavier.
 
 defaults:
   rps: 0.5
@@ -16,51 +20,91 @@ defaults:
 personas:
   - id: owner_alice
     cat_ids: ["hotpot", "bbq"]
-    device_ids: ["feeder-hotpot", "fountain-1"]
-    locale: en-US
+    cat_names: ["火锅", "烧烤"]
+    household_id: "household-1"
+    device_ids: ["feeder-01", "feeder-02", "fountain-01"]
+    locale: zh-CN
 
   - id: owner_bob
     cat_ids: ["bbq"]
-    device_ids: ["feeder-bbq", "tracker-bbq"]
-    locale: en-US
+    cat_names: ["烧烤"]
+    household_id: "household-1"
+    device_ids: ["feeder-02"]
+    locale: zh-CN
 
-  - id: anon_browser
+  - id: visitor
     cat_ids: []
+    cat_names: []
     device_ids: []
     locale: en-US
 
 scenarios:
-  # --- READ-HEAVY scenarios (bulk of traffic) ---
+  # ===========================================================
+  # 日常照料 — 喂食、喝水、设备遥测
+  # ===========================================================
 
-  - id: browse_cats
+  # 正常喂食 (早晚各一次, 低权重保持频率真实)
+  - id: morning_feeding
     surface: rest
-    weight: 25
-    allowed_personas: [owner_alice, owner_bob, anon_browser]
+    weight: 0.03
+    allowed_personas: [owner_alice]
     steps:
-      - call: list_cats
+      - call: create_feeding
+        body:
+          cat_id: "${persona.cat_ids[0]}"
+          food_type: "wet"
+          amount_grams: { sample: { dist: normal, mean: 50, std: 8 } }
+      - call: create_feeding
+        body:
+          cat_id: "${persona.cat_ids[1]}"
+          food_type: "wet"
+          amount_grams: { sample: { dist: normal, mean: 45, std: 8 } }
 
-  - id: check_feeding_history
+  - id: evening_feeding
     surface: rest
-    weight: 20
+    weight: 0.03
     allowed_personas: [owner_alice, owner_bob]
     steps:
-      - call: list_feedings
-        path_params:
+      - call: create_feeding
+        body:
           cat_id: "${persona.cat_ids[0]}"
+          food_type: "dry"
+          amount_grams: { sample: { dist: normal, mean: 40, std: 10 } }
 
-  - id: health_browse
+  # 通过智能喂食器喂食 (会触发 Phase 3 的限量检查)
+  - id: device_feed_command
     surface: rest
-    weight: 20
+    weight: 0.02
     allowed_personas: [owner_alice, owner_bob]
     steps:
-      - call: get_health
+      - call: post_command
         path_params:
-          cat_id: "${persona.cat_ids[0]}"
-      - call: get_alerts
-        path_params:
-          cat_id: "${persona.cat_ids[0]}"
+          id: "${persona.device_ids[0]}"
+        body:
+          command: "feed"
+          args:
+            cat_id: "${persona.cat_ids[0]}"
+            amount_grams: { sample: { dist: normal, mean: 30, std: 5 } }
+            food_type: { sample: { dist: choices, choices: [wet, dry], weights: [0.4, 0.6] } }
 
-  - id: device_telemetry
+  # 超量喂食尝试 (测试 429 限制, 很少发生)
+  - id: overfeed_attempt
+    surface: rest
+    weight: 0.005
+    allowed_personas: [owner_alice]
+    steps:
+      - call: post_command
+        path_params:
+          id: "feeder-01"
+        body:
+          command: "feed"
+          args:
+            cat_id: "hotpot"
+            amount_grams: 180
+            food_type: "dry"
+
+  # 设备遥测 (喂食器电量、水位、WiFi等)
+  - id: device_telemetry_feeder
     surface: rest
     weight: 15
     allowed_personas: [owner_alice, owner_bob]
@@ -69,91 +113,234 @@ scenarios:
         path_params:
           id: "${persona.device_ids[0]}"
         body:
-          temperature: { sample: { dist: normal, mean: 22.0, std: 2.0 } }
-          humidity: { sample: { dist: uniform, min: 30, max: 70 } }
+          metrics:
+            battery_pct: { sample: { dist: uniform, min: 60, max: 100 } }
+            food_remaining_g: { sample: { dist: uniform, min: 100, max: 800 } }
+            wifi_rssi: { sample: { dist: normal, mean: -45, std: 10 } }
 
-  # --- NORMAL FEEDING (very low weight = realistic frequency) ---
-  # At weight 2 out of total ~100, this fires ~2% of the time.
-  # 0.5 RPS × 3300s × 2% = ~33 picks → but only ~3 cats, so ~11 per cat/day.
-  # Adjusted to weight 0.5 → ~0.5% → ~8 feedings/day across 3 cats ≈ 2-3 per cat.
-
-  - id: normal_feeding
+  - id: device_telemetry_fountain
     surface: rest
-    weight: 0.02
+    weight: 10
+    allowed_personas: [owner_alice]
+    steps:
+      - call: post_telemetry
+        path_params:
+          id: "fountain-01"
+        body:
+          metrics:
+            water_level_ml: { sample: { dist: uniform, min: 200, max: 1000 } }
+            filter_days_remaining: { sample: { dist: uniform, min: 1, max: 30 } }
+            battery_pct: { sample: { dist: uniform, min: 40, max: 95 } }
+
+  # ===========================================================
+  # 日常查看 — 浏览猫咪、设备状态
+  # ===========================================================
+
+  - id: browse_cats
+    surface: rest
+    weight: 15
+    allowed_personas: [owner_alice, owner_bob, visitor]
+    steps:
+      - call: list_cats
+
+  - id: check_device_status
+    surface: rest
+    weight: 10
     allowed_personas: [owner_alice, owner_bob]
     steps:
-      - call: create_feeding
-        body:
+      - call: list_devices
+      - call: get_device
+        path_params:
+          id: "${persona.device_ids[0]}"
+
+  - id: check_feeding_history
+    surface: rest
+    weight: 12
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: list_feedings
+        query_params:
           cat_id: "${persona.cat_ids[0]}"
-          food_type: { sample: { dist: choices, choices: [wet, dry], weights: [0.6, 0.4] } }
-          amount_grams: { sample: { dist: normal, mean: 50, std: 10 } }
 
-  # --- ANOMALOUS FEEDING (even lower weight = rare, for AIOps detection) ---
-  # ~0.05% of picks → roughly 1 anomaly per day.
-  # Characteristics that should trigger alerts:
-  #   - Unusually large amount (200-500g vs normal 40-60g)
-  #   - Could happen at any hour (including 3am)
+  - id: check_health
+    surface: rest
+    weight: 12
+    allowed_personas: [owner_alice, owner_bob]
+    steps:
+      - call: get_health
+        path_params:
+          cat_id: "${persona.cat_ids[0]}"
 
-  - id: anomalous_feeding
+  - id: check_vet_records
+    surface: rest
+    weight: 5
+    allowed_personas: [owner_alice]
+    steps:
+      - call: get_vet
+        path_params:
+          cat_id: "${persona.cat_ids[0]}"
+
+  # ===========================================================
+  # AI 助手对话 — 智能养猫的核心场景
+  # ===========================================================
+
+  # 日常关怀 — "猫咪今天怎么样"
+  - id: chat_daily_checkup
+    surface: agent
+    via: chatbot
+    weight: 8
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}今天状态怎么样？"
+      - "看看{cat_name}的健康评分"
+      - "{cat_name}今天有什么异常吗？"
+      - "两只猫今天都还好吗？"
+
+  # 喂食决策 — 需要推理约束 (Phase 4 frontier-differentiating)
+  - id: chat_feeding_decision
+    surface: agent
+    via: chatbot
+    weight: 6
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}现在能喂吗？"
+      - "给{cat_name}推荐今天的喂食方案"
+      - "{cat_name}今天还能吃多少？"
+      - "火锅有低蛋白限制，现在能喂什么？"
+      - "两只猫都该喂晚餐了，分别给多少合适？"
+
+  # 历史对比 — 需要 rollup 数据 (Phase 5)
+  - id: chat_weekly_comparison
+    surface: agent
+    via: chatbot
+    weight: 4
+    allowed_personas: [owner_alice]
+    prompts:
+      - "{cat_name}这周和上周比，吃得怎么样？"
+      - "火锅最近一周的进食规律正常吗？"
+      - "烧烤的体重趋势如何？"
+      - "对比一下两只猫这周的食量"
+
+  # 设备管理 — 包含 offline 503 场景 (Phase 3)
+  - id: chat_device_management
+    surface: agent
+    via: chatbot
+    weight: 4
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "通过喂食器给{cat_name}喂30克干粮"
+      - "我的设备都在线吗？"
+      - "水碗还有多少水？"
+      - "喂食器电量怎么样？"
+
+  # 兽医相关 — 约束冲突推理 (Phase 4)
+  - id: chat_vet_constraints
+    surface: agent
+    via: chatbot
+    weight: 3
+    allowed_personas: [owner_alice]
+    prompts:
+      - "火锅的兽医有什么饮食限制？"
+      - "烧烤在减重，今天的配额是多少？"
+      - "火锅术后恢复中，能喂鸡肉味的吗？"
+      - "看看两只猫的兽医记录"
+
+  # 异常发现 — 考验模型推理 (Phase 4 anomaly)
+  - id: chat_anomaly_detection
+    surface: agent
+    via: chatbot
+    weight: 2
+    allowed_personas: [owner_alice]
+    prompts:
+      - "火锅这个月的喂食记录有没有异常？"
+      - "帮我检查一下数据有没有不对的地方"
+      - "烧烤最近的体重数据正常吗？"
+
+  # 开放问题 — 测试模型应对模糊输入
+  - id: chat_open_ended
+    surface: agent
+    via: chatbot
+    weight: 3
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "今天需要我注意什么？"
+      - "给我一个今天的养猫摘要"
+      - "有什么建议？"
+
+  # --- 模型 A/B 对比 (Phase 4.5) ---
+  # 同样的问题用不同模型问, 测试模型切换路径
+
+  - id: chat_model_compare_frontier
+    surface: agent
+    via: chatbot
+    weight: 2
+    allowed_personas: [owner_alice]
+    model_id: "claude-sonnet-4-5"
+    prompts:
+      - "给火锅制定明天的喂食计划，考虑兽医限制"
+      - "分析一下两只猫最近的健康趋势"
+
+  - id: chat_model_compare_weak
+    surface: agent
+    via: chatbot
+    weight: 2
+    allowed_personas: [owner_alice]
+    model_id: "nova-pro"
+    prompts:
+      - "给火锅制定明天的喂食计划，考虑兽医限制"
+      - "分析一下两只猫最近的健康趋势"
+
+  # --- 直连 agent 测试 (绕过 chatbot BFF) ---
+
+  - id: direct_langgraph
+    surface: agent
+    via: langgraph_direct
+    weight: 3
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}今天吃了多少？"
+      - "给{cat_name}的健康评分是多少？"
+      - "{cat_name}有什么兽医记录？"
+
+  - id: direct_strands
+    surface: agent
+    via: strands_direct
+    weight: 3
+    allowed_personas: [owner_alice, owner_bob]
+    prompts:
+      - "{cat_name}今天吃了多少？"
+      - "给{cat_name}的健康评分是多少？"
+      - "{cat_name}有什么兽医记录？"
+
+  # ===========================================================
+  # 异常场景 — 低频, 用于 AIOps 告警验证
+  # ===========================================================
+
+  # 超大喂食量 (触发 health alert)
+  - id: anomalous_large_feeding
     surface: rest
     weight: 0.002
-    allowed_personas: [owner_alice, owner_bob]
+    allowed_personas: [owner_alice]
     steps:
       - call: create_feeding
         body:
           cat_id: "${persona.cat_ids[0]}"
           food_type: "wet"
-          amount_grams: { sample: { dist: uniform, min: 200, max: 500 } }
+          amount_grams: { sample: { dist: uniform, min: 200, max: 400 } }
 
-  # --- AGENT scenarios ---
-
-  - id: chat_health_inquiry
-    surface: agent
-    via: chatbot
-    weight: 10
-    allowed_personas: [owner_alice, owner_bob]
-    prompts:
-      - "{cat_name}最近怎么样？"
-      - "查一下{cat_name}的健康状况"
-      - "{cat_name}有什么警报吗？"
-      - "{cat_name}最后一次吃东西是什么时候？"
-
-  - id: chat_device_check
-    surface: agent
-    via: chatbot
-    weight: 5
-    allowed_personas: [owner_alice, owner_bob]
-    prompts:
-      - "我的设备都正常吗？"
-      - "列出所有设备"
-      - "喂食器在线吗？"
-
-  - id: chat_anonymous_browse
-    surface: agent
-    via: chatbot
-    weight: 5
-    allowed_personas: [anon_browser]
-    prompts:
-      - "有哪些猫？"
-      - "你能帮我做什么？"
-      - "最近的喂食记录"
-
-  - id: direct_langgraph_health
-    surface: agent
-    via: langgraph_direct
-    weight: 5
-    allowed_personas: [owner_alice, owner_bob]
-    prompts:
-      - "{cat_name}今天吃了多少？"
-      - "给我{cat_name}的健康报告"
-      - "{cat_name}的体重变化如何？"
-
-  - id: direct_strands_health
-    surface: agent
-    via: strands_direct
-    weight: 5
-    allowed_personas: [owner_alice, owner_bob]
-    prompts:
-      - "{cat_name}今天吃了多少？"
-      - "给我{cat_name}的健康报告"
-      - "{cat_name}的体重变化如何？"
+  # 频繁连续喂食 (触发 min_interval 限制)
+  - id: rapid_feeding_burst
+    surface: rest
+    weight: 0.003
+    allowed_personas: [owner_alice]
+    steps:
+      - call: create_feeding
+        body:
+          cat_id: "hotpot"
+          food_type: "dry"
+          amount_grams: 30
+      - call: create_feeding
+        body:
+          cat_id: "hotpot"
+          food_type: "dry"
+          amount_grams: 30
