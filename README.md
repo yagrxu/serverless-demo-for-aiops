@@ -49,8 +49,8 @@ ui/
   wx-mini-program/        # WeChat Mini Program — end-user chat interface (TypeScript)
   device-simulator/
   admin-console/
-scripts/
-  ci/                     # OIDC setup / teardown for GitHub Actions
+scripts/                  # Scenario deploys + load generators
+init/github/tf/           # Terraform: OIDC providers + deploy roles in both accounts
 .github/workflows/
   deploy.yml              # OIDC deploy to test / release
 tmp/                      # Previous CDK app + legacy scripts, kept for reference

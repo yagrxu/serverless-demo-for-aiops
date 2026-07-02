@@ -10,7 +10,7 @@ github_repo = "serverless-demo-for-aiops"
 # Each environment maps to a separate AWS account
 environments = {
   test = {
-    aws_profile       = "default"                  # AWS CLI profile for the test account
+    aws_profile       = "cloudops-demo"            # AWS CLI profile for the test account
     aws_region        = "us-east-1"
     branch            = "test"                     # Branch that triggers deploy to test
     environment_name  = "test"                     # GitHub Actions environment name
@@ -18,7 +18,7 @@ environments = {
     lock_table_name   = "aiops-demo-terraform-locks"
   }
   release = {
-    aws_profile       = "cloudops-demo"            # AWS CLI profile for the release/production account
+    aws_profile       = "default"                  # AWS CLI profile for the release/production account
     aws_region        = "us-east-1"
     branch            = "release"                  # Branch that triggers deploy to release
     environment_name  = "release"                  # GitHub Actions environment name

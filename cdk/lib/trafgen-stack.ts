@@ -38,8 +38,10 @@ export class TrafgenStack extends cdk.Stack {
     super(scope, id, props);
 
     // --- S3 bucket for manifest storage (7-day lifecycle) ---
+    // Include account ID to avoid global bucket name collision when the
+    // same stack deploys to multiple accounts (test + release).
     const manifestBucket = new s3.Bucket(this, 'ManifestBucket', {
-      bucketName: `${id}-manifests`,
+      bucketName: `${id}-manifests-${this.account}`,
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       lifecycleRules: [

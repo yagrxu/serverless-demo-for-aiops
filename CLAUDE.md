@@ -24,7 +24,7 @@ agents/                Docker-packaged AgentCore runtimes.
   langgraph/ strands/ entrypoint/
 ui/                    React/TS frontends. Build output goes in ui/<name>/dist.
   chatbot/ device-simulator/ admin-console/
-scripts/ci/            OIDC setup + teardown for GitHub Actions.
+init/github/tf/        Terraform bootstrap: OIDC providers + deploy roles in both accounts.
 .github/workflows/     deploy.yml — OIDC-based deploy on push to test or release.
 tmp/                   Prior demo (Items + S3) and legacy env-var scenarios. Not deployed.
 CICD.md                Branch strategy, pipeline diagram, full setup steps.
@@ -93,7 +93,7 @@ CI deploys via OIDC — no profile, no keys. See `.github/workflows/deploy.yml`.
 - **Injecting bugs**: edit the actual handler code in `cdk/lambda/<service>/handler.py` or the agent source in `agents/<name>/`. Commit on a `feature/*` branch. Describe the bug honestly in the commit message — this repo exists so the user can find those bugs via AIOps tooling.
 - **Before deploying**: run `npx cdk synth` or `npx cdk diff` and show the output. Destructive diffs (DynamoDB table replace, CloudFront distribution replace) need explicit confirmation before `cdk deploy`.
 - **Don't run `cdk deploy` against the production account from your machine.** CI does that, via the `release` branch.
-- **Don't touch `.github/workflows/deploy.yml` or `scripts/ci/*`** without explaining why — those are the plumbing that lets the whole flow work.
+- **Don't touch `.github/workflows/deploy.yml` or `init/github/tf/*`** without explaining why — those are the plumbing that lets the whole flow work.
 - **`tmp/` is reference only.** Don't modify, don't delete — it's the old Items+S3 demo kept for comparison and may get pruned later.
 - **No env-var failure toggles.** The old `INJECT_LATENCY` / `SIMULATE_*` knobs lived in `tmp/`. Bugs go in source on a feature branch.
 - **No Cognito.** UIs are public, served only via CloudFront + HTTPS with Origin Access Control. If you're asked to add auth, push back unless the user explicitly confirms.
@@ -102,7 +102,7 @@ CI deploys via OIDC — no profile, no keys. See `.github/workflows/deploy.yml`.
 
 - Structural questions about deploys: read `CICD.md`.
 - Which AWS account a branch deploys to: see the mapping table in `CICD.md`.
-- How the OIDC role is granted: `scripts/ci/setup-github-oidc.sh` is the authoritative script.
+- How the OIDC role is granted: `init/github/tf/` is the authoritative Terraform project. Both accounts are bootstrapped in one apply.
 
 ## Known quirks
 
