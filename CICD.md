@@ -33,10 +33,10 @@ Key idea: `test` and `release` never receive "real" merges. They are fast-forwar
 
 ## Mapping
 
-| Branch    | GitHub environment | AWS account       | Local profile    | Role name                       |
-|-----------|--------------------|-------------------|------------------|---------------------------------|
-| `test`    | `test`             | test account      | `cloudops-demo`  | `gha-serverless-demo-test`      |
-| `release` | `release`          | production account| `default`        | `gha-serverless-demo-release`   |
+| Branch    | GitHub environment | AWS account       | Local profile    | Role name                          |
+|-----------|--------------------|-------------------|------------------|------------------------------------|
+| `test`    | `test`             | test account      | `cloudops-demo`  | `aiops-demo-github-actions-role`   |
+| `release` | `release`          | production account| `default`        | `aiops-demo-github-actions-role`   |
 
 The workflow reads `vars.AWS_DEPLOY_ROLE_ARN` from the matching GitHub environment, so the same workflow YAML works for both.
 
@@ -155,19 +155,46 @@ The PR test pipeline and the deploy pipeline are completely independent:
 
 They share no jobs, no composite actions, and no secrets.
 
-## One-time setup (per account)
+## One-time setup (per account pair)
 
-Run the setup script once with each AWS profile:
+The Terraform project at [`init/github/tf/`](./init/github/tf/) bootstraps both accounts at once. It creates, per account:
+
+- GitHub Actions OIDC provider
+- IAM role `aiops-demo-github-actions-role` (trust scoped to the matching GitHub environment)
+- AdministratorAccess + Terraform state access policies
+- S3 bucket for Terraform remote state
+- DynamoDB table for state locking
+
+Run it once from a workstation that has both AWS profiles configured:
 
 ```bash
-# Test account — cloudops-demo profile → 'test' environment
-AWS_PROFILE=cloudops-demo GH_ENV=test ./scripts/ci/setup-github-oidc.sh
-
-# Production account — default profile → 'release' environment
-AWS_PROFILE=default GH_ENV=release ./scripts/ci/setup-github-oidc.sh
+cd init/github/tf
+terraform init
+terraform apply
 ```
 
-Each run creates the GitHub OIDC provider in that account (if missing), the deploy role scoped to that GitHub environment, attaches `AdministratorAccess` (test-only project), and — if `gh` is authed — creates the environment and sets the `AWS_DEPLOY_ROLE_ARN` variable automatically.
+After apply, register the role ARNs as GitHub environment variables:
+
+```bash
+gh variable set AWS_DEPLOY_ROLE_ARN \
+  --repo yagrxu/serverless-demo-for-aiops \
+  --env test \
+  --body "$(terraform output -raw test_deploy_role_arn)"
+
+gh variable set AWS_DEPLOY_ROLE_ARN \
+  --repo yagrxu/serverless-demo-for-aiops \
+  --env release \
+  --body "$(terraform output -raw release_deploy_role_arn)"
+```
+
+Profile-to-environment mapping (see `terraform.tfvars`):
+
+| GitHub env | AWS profile     | Account       |
+|------------|-----------------|---------------|
+| `test`     | `cloudops-demo` | test account  |
+| `release`  | `default`       | production    |
+
+For full details (variables, migration notes, dual-account architecture), see [`init/github/tf/README.md`](./init/github/tf/README.md).
 
 ### Enable CloudWatch Transaction Search (per account, one-time)
 
@@ -352,11 +379,11 @@ This keeps `main` authoritative even under pressure.
 ## Teardown
 
 ```bash
-AWS_PROFILE=cloudops-demo GH_ENV=test ./scripts/ci/teardown-github-oidc.sh
-AWS_PROFILE=default GH_ENV=release ./scripts/ci/teardown-github-oidc.sh
+cd init/github/tf
+terraform destroy
 ```
 
-Removes the deploy role and the GitHub environment variable. CDK stacks are left alone — run `cdk destroy --all` with the matching profile if you want those gone too.
+The S3 state buckets and DynamoDB lock tables have `prevent_destroy = true` on them — remove those lifecycle blocks in `state_backend.tf` first if you truly want a full nuke, or just delete them manually afterward. CDK stacks are left alone — run `cdk destroy --all` with the matching profile if you want those gone too.
 
 ## Notes for this test project
 

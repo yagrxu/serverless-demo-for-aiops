@@ -14,6 +14,4 @@ Organized by purpose:
   - `lambda-throttle.sh <api-url>`
   - `dynamodb-throttle.sh <api-url>`
 
-- `ci/` — GitHub Actions / AWS plumbing
-  - `setup-github-oidc.sh` — creates the OIDC provider, deploy role, and repo secret
-  - `teardown-github-oidc.sh` — undoes the above
+GitHub Actions / AWS plumbing (OIDC providers, deploy roles, state buckets) is provisioned via Terraform in [`init/github/tf/`](../init/github/tf/).

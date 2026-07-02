@@ -4,7 +4,9 @@
 
 # State files (local state for this bootstrap project)
 *.tfstate
+*.tfstate.*.backup
 *.tfstate.backup
+*.tfstate.pre-swap-*
 
 # Plan files
 *.tfplan
