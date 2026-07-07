@@ -113,7 +113,7 @@ wired from `cdk/bin/app.ts`:
 | `AgentStack`         | `agent-stack.ts`           | AgentCore runtimes referencing tagged images in EcrStack repos. |
 | `GatewayStack`       | `gateway-stack.ts`         | AgentCore Gateway (MCP) + 4 GatewayTargets pointing to Lambdas. |
 | `FargateStack`       | `fargate-stack.ts`         | ECS Fargate + ALB hosting the Next.js chatbot BFF.            |
-| `ObservabilityStack` | `observability-stack.ts`   | Application Signals discovery, three persona dashboards (SRE / GenAI / Business), four saved Logs Insights queries, SNS alarm topic + 23 alarms (Phase 4), Contributor Insights enabled on `DeviceTelemetry` + `HealthMetrics`. |
+| `ObservabilityStack` | `observability-stack.ts`   | Application Signals discovery, three persona dashboards (SRE / GenAI / Business), four saved Logs Insights queries, SNS alarm topic + 19 alarms (Phase 4), Contributor Insights enabled on `DeviceTelemetry` + `HealthMetrics`. |
 | `UiStack`            | `ui-stack.ts`              | CloudFront + S3 hosting the static UIs (device-sim, admin).   |
 | `TrafgenStack`       | `trafgen-stack.ts`         | ECS Fargate scheduled task for the traffic generator + ADOT sidecar. Gated behind `-c trafgenEnabled=true`. |
 
@@ -518,7 +518,7 @@ Every compute layer is auto-instrumented. No hand-rolled tracing code.
 Three persona-scoped dashboards:
 
 **SRE Dashboard (`aiops-cat-demo-sre`):**
-- Alarm status widget (all 23 alarms)
+- Alarm status widget (all 19 alarms)
 - API Gateway 4xx/5xx per resource path
 - Per-Lambda Duration (p50, p90, p99), Errors, Throttles
 - Per-table DynamoDB ConsumedRead/WriteCapacityUnits, ThrottledRequests
@@ -540,11 +540,11 @@ Three persona-scoped dashboards:
 
 ### Alarms
 
-All 23 alarms publish to the SNS topic `aiops-cat-demo-alarms`:
+All 19 alarms publish to the SNS topic `aiops-cat-demo-alarms`:
 
 | # | Count | Alarm | Source |
 |---|-------|-------|--------|
-| 6.1 | 4 | Lambda Duration p99 anomaly band | per `FunctionName` |
+| 6.1 | — | _(removed)_ Lambda Duration p99 anomaly band — too noisy, kept on dashboard only | per `FunctionName` |
 | 6.2 | 4 | Lambda Errors > 0 | per `FunctionName` |
 | 6.3 | 1 | API GW 5XXError anomaly band | aggregate |
 | 6.4 | 7 | DDB ThrottledRequests > 0 | per `TableName` |
