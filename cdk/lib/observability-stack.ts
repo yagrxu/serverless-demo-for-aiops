@@ -578,11 +578,37 @@ export class ObservabilityStack extends cdk.Stack {
       return alarm;
     };
 
-    // 6.1 — (removed) Per-Lambda Duration p99 anomaly-band alarms.
-    // These 4 anomaly-detector alarms were the noisiest in the stack:
-    // they need ~14 days of baseline to stop flapping and carried low
-    // signal for this demo. Per-Lambda p99 latency is still on the SRE
-    // dashboard (Row 3) for visual inspection; it just no longer pages.
+    // 6.1 — Lambda Duration p99 anomaly per function (×4).
+    // Tuned to be low-noise: a wide anomaly band (4 stddev) over a
+    // 5-minute period, requiring 3 consecutive breaching periods before
+    // it fires. This suppresses transient p99 spikes and false positives
+    // while still catching sustained latency regressions.
+    for (const fn of Object.values(props.lambdas)) {
+      const p99 = fn.metricDuration({
+        statistic: 'p99',
+        period: cdk.Duration.minutes(5),
+      });
+      register(
+        new cloudwatch.Alarm(this, `LambdaDurationP99Anomaly_${fn.node.id}`, {
+          alarmName: `${projectName}-${fn.functionName}-duration-p99-anomaly`,
+          alarmDescription: 'Lambda Duration p99 outside the learned anomaly band for 15 minutes',
+          metric: new cloudwatch.MathExpression({
+            // ANOMALY_DETECTION_BAND wraps the metric and produces a
+            // composite that the AnomalyDetector threshold compares.
+            // Band width 4 (stddev) — wider band = fewer false alarms.
+            expression: 'ANOMALY_DETECTION_BAND(m1, 4)',
+            usingMetrics: { m1: p99 },
+            label: 'p99 expected band',
+            period: cdk.Duration.minutes(5),
+          }),
+          evaluationPeriods: 3,
+          datapointsToAlarm: 3,
+          threshold: 0, // band-comparison alarm — threshold is ignored
+          comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_LOWER_OR_GREATER_THAN_UPPER_THRESHOLD,
+          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+        })
+      );
+    }
 
     // 6.2 — Lambda Errors > 0 per function (×4).
     for (const fn of Object.values(props.lambdas)) {
