@@ -578,31 +578,11 @@ export class ObservabilityStack extends cdk.Stack {
       return alarm;
     };
 
-    // 6.1 — Lambda Duration p99 anomaly per function (×4).
-    for (const fn of Object.values(props.lambdas)) {
-      const p99 = fn.metricDuration({
-        statistic: 'p99',
-        period: cdk.Duration.minutes(1),
-      });
-      register(
-        new cloudwatch.Alarm(this, `LambdaDurationP99Anomaly_${fn.node.id}`, {
-          alarmName: `${projectName}-${fn.functionName}-duration-p99-anomaly`,
-          alarmDescription: 'Lambda Duration p99 outside the learned anomaly band over 2 minutes',
-          metric: new cloudwatch.MathExpression({
-            // ANOMALY_DETECTION_BAND wraps the metric and produces a
-            // composite that the AnomalyDetector threshold compares.
-            expression: 'ANOMALY_DETECTION_BAND(m1, 2)',
-            usingMetrics: { m1: p99 },
-            label: 'p99 expected band',
-            period: cdk.Duration.minutes(1),
-          }),
-          evaluationPeriods: 2,
-          threshold: 0, // band-comparison alarm — threshold is ignored
-          comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_LOWER_OR_GREATER_THAN_UPPER_THRESHOLD,
-          treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
-        })
-      );
-    }
+    // 6.1 — (removed) Per-Lambda Duration p99 anomaly-band alarms.
+    // These 4 anomaly-detector alarms were the noisiest in the stack:
+    // they need ~14 days of baseline to stop flapping and carried low
+    // signal for this demo. Per-Lambda p99 latency is still on the SRE
+    // dashboard (Row 3) for visual inspection; it just no longer pages.
 
     // 6.2 — Lambda Errors > 0 per function (×4).
     for (const fn of Object.values(props.lambdas)) {
