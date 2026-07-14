@@ -229,7 +229,7 @@ The `aiops-cat-demo-observability` stack must be deployed **before** all other s
 | `AWS::ApplicationSignals::Discovery` | Enables Application Signals at account scope (creates the service-linked role `AWSServiceRoleForCloudWatchApplicationSignals`) |
 | SNS topic (`aiops-cat-demo-alarms`) | Single alarm delivery channel; topic policy restricts `sns:Publish` to `cloudwatch.amazonaws.com` |
 | CloudWatch Dashboards × 3 | SRE, GenAI, and Business persona dashboards |
-| CloudWatch Alarms + Anomaly Detectors | 19 alarms covering Lambda, API Gateway, DynamoDB, Bedrock, AgentCore, RUM, and CloudFront |
+| CloudWatch Alarms + Anomaly Detectors | 23 alarms covering Lambda, API Gateway, DynamoDB, Bedrock, AgentCore, RUM, and CloudFront |
 | Logs Insights Query Definitions × 4 | Saved queries for trace correlation, slow tool calls, DDB throttles, and injected-bug markers |
 
 #### Deploy command
@@ -293,7 +293,7 @@ These are console/CLI actions that live outside CDK because they carry propagati
 
 4. **Anomaly detector warm-up — 14-day caveat**
 
-   Anomaly-based alarms (API GW 5xx, `DeviceWriteSuccess`, AgentCore token, RUM JS error rate) require ~14 days of baseline data before they fire accurately. During the warm-up period these alarms will remain silent even if anomalous behavior occurs. Plan demo sessions accordingly.
+   Anomaly-based alarms (Lambda Duration p99, API GW 5xx, `DeviceWriteSuccess`, AgentCore token, RUM JS error rate) require ~14 days of baseline data before they fire accurately. During the warm-up period these alarms will remain silent even if anomalous behavior occurs. Plan demo sessions accordingly.
 
 5. **Transaction Search propagation lag — 10 minutes**
 

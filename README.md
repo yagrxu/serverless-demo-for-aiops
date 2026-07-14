@@ -279,9 +279,9 @@ Three persona-scoped dashboards are deployed by the Observability stack:
 
 ### Alarms and anomaly detectors
 
-19 alarms fire to a single SNS topic (`aiops-cat-demo-alarms`). Key ones:
+23 alarms fire to a single SNS topic (`aiops-cat-demo-alarms`). Key ones:
 
-- Lambda Errors > 0 (×4)
+- Lambda Duration p99 anomaly (×4, wide 4-stddev band) and Errors > 0 (×4)
 - API Gateway 5xx anomaly
 - DynamoDB ThrottledRequests > 0 per table (×7)
 - `DeviceWriteSuccess` below anomaly band (catches silent DDB failures)
